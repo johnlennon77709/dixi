@@ -6,7 +6,7 @@ if (maior < 22 || (maior === 22 && menor < 13)) {
   process.exit(1);
 }
 const { abrir } = require('./db');
-const { iniciar } = require('./app');
+const { iniciar, urlsCelular } = require('./app');
 
 const porta = Number(process.env.PORT || 3000);
 const db = abrir();
@@ -14,6 +14,14 @@ iniciar(db, porta).then(() => {
   console.log(`DIXI-MVP rodando em http://localhost:${porta}`);
   console.log(`  Painel do RH ........ http://localhost:${porta}/`);
   console.log(`  App de ponto (REP-P)  http://localhost:${porta}/ponto.html`);
+  const cel = urlsCelular();
+  if (cel.length) {
+    console.log('\n  NO CELULAR (conectado no mesmo Wi-Fi deste PC):');
+    console.log(`    Bater ponto ...... ${cel[0]}/ponto.html?token=demo-app`);
+    console.log(`    Painel do RH ..... ${cel[0]}/`);
+    console.log('    Ou escaneie o QR code na aba "Celular" do painel.');
+    console.log('    O celular vai avisar "conexão não particular": toque em Avançado > Continuar.');
+  }
   // Abre o navegador só depois que o servidor já está ouvindo (evita "página não encontrada").
   if (process.env.DIXI_ABRIR) {
     const { exec } = require('node:child_process');

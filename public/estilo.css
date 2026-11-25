@@ -21,3 +21,5 @@ th{color:var(--sub);font-weight:600}tr.folga td{color:var(--sub)}tr.alerta td{ba
 .sub{color:var(--sub);font-size:13px}.oculto{display:none!important}code{font-size:12px;word-break:break-all}
 .login{max-width:380px;margin:60px auto}.login input{width:100%;margin-bottom:8px}
 .tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;border:1px solid var(--borda)}
+@media (max-width:700px){header{padding:10px 12px}header h1{font-size:16px}#empNome{order:5;width:100%}nav{order:6;width:100%;overflow-x:auto;flex-wrap:nowrap}nav button{white-space:nowrap}
+main{padding:10px}.card{padding:12px}.linha>*{flex:1 1 140px}.kpi b{font-size:17px}input,select,button.b{min-height:42px}}

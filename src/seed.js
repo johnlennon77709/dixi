@@ -1,4 +1,6 @@
 'use strict';
+// Cerca virtual: a demo vem sem coordenadas para funcionar de qualquer lugar; cadastre
+// latitude/longitude do estabelecimento (aba Dispositivos) para exigir o GPS no local.
 // Popula uma empresa de demonstração com escalas, funcionários, dispositivo e um mês de marcações.
 const { abrir } = require('./db');
 const { hashSenha, semearFeriados } = require('./app');
@@ -16,7 +18,7 @@ semearFeriados(db, ano); semearFeriados(db, ano + 1);
 const emp = Number(db.prepare("INSERT INTO empresas (cnpj, razao_social) VALUES ('11222333000181','Padaria Demo Ltda')").run().lastInsertRowid);
 db.prepare('INSERT INTO usuarios (empresa_id, email, senha_hash, nome) VALUES (?,?,?,?)').run(emp, 'admin@demo.com', hashSenha('demo123'), 'Admin Demo');
 const est = Number(db.prepare(`INSERT INTO estabelecimentos (empresa_id, nome, endereco, latitude, longitude, raio_metros, uf)
-  VALUES (?, 'Loja Centro', 'Rua XV de Novembro, 100 - Curitiba/PR', -25.4296, -49.2713, 300, 'PR')`).run(emp).lastInsertRowid);
+  VALUES (?, 'Loja Centro', 'Rua XV de Novembro, 100 - Curitiba/PR', NULL, NULL, 300, 'PR')`).run(emp).lastInsertRowid);
 
 const esc = (nome, tipo, config) => Number(db.prepare('INSERT INTO escalas (empresa_id, nome, tipo, config) VALUES (?,?,?,?)').run(emp, nome, tipo, JSON.stringify(config)).lastInsertRowid);
 const dia = { entrada: '08:00', saida: '17:00', intervalo: 60 };

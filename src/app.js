@@ -1,6 +1,8 @@
 'use strict';
 // API HTTP (sem framework) + arquivos estáticos do painel e do app REP-P.
 const http = require('node:http');
+const https = require('node:https');
+const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -240,6 +242,11 @@ function criarApp(db) {
     const t = lerToken(q.get('c')); if (!t || String(t.m) !== params.id) throw erro(403, 'link inválido');
     return arquivo(`comprovante_${params.id}.pdf`, 'application/pdf', fiscal.comprovantePDF(db, Number(params.id)));
   });
+  rota('GET', '/api/rede', 'rh', () => ({ urls: urlsCelular() }));
+  rota('GET', '/api/qr', 'rh', async ({ q }) => {
+    const svg = await require('qrcode').toString(String(q.get('texto') || '').slice(0, 500), { type: 'svg', margin: 1, width: 180 });
+    return { __arquivo: true, inline: true, nome: 'qr.svg', tipo: 'image/svg+xml', conteudo: Buffer.from(svg) };
+  });
   rota('GET', '/api/hora', null, () => ({ agora: horaLegal.agora().toISOString(), ...horaLegal.status() }));
 
   // ---------- servidor ----------
@@ -262,7 +269,7 @@ function criarApp(db) {
       }
       const out = await r.fn(ctx);
       if (out && out.__arquivo) {
-        res.writeHead(200, { 'content-type': out.tipo, 'content-disposition': `attachment; filename="${out.nome}"` });
+        res.writeHead(200, { 'content-type': out.tipo, 'content-disposition': `${out.inline ? 'inline' : 'attachment'}; filename="${out.nome}"` });
         return res.end(out.conteudo);
       }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
@@ -296,8 +303,46 @@ function estatico(p, res) {
   fs.createReadStream(f).pipe(res);
 }
 
+// ---------- acesso pelo celular (mesma rede Wi-Fi) ----------
+// Câmera e GPS no celular exigem HTTPS, então o servidor também sobe em HTTPS com um
+// certificado autoassinado que cobre os IPs da rede local do PC.
+const PORTA_HTTPS = Number(process.env.PORT_HTTPS || 3443);
+function ipsLocais() {
+  const ips = [];
+  for (const lista of Object.values(os.networkInterfaces())) for (const i of lista || []) if (i.family === 'IPv4' && !i.internal) ips.push(i.address);
+  // redes domésticas (192.168.x / 10.x) primeiro
+  return ips.sort((a, b) => (/^(192\.168|10\.)/.test(b) ? 1 : 0) - (/^(192\.168|10\.)/.test(a) ? 1 : 0));
+}
+const urlsCelular = () => ipsLocais().map((ip) => `https://${ip}:${PORTA_HTTPS}`);
+function certificadoHttps() {
+  const forge = require('node-forge');
+  const dir = path.join(__dirname, '..', 'data', 'certs');
+  const ips = ipsLocais(); const marca = ips.join(',');
+  const kf = path.join(dir, 'https.key.pem'); const cf = path.join(dir, 'https.cert.pem'); const mf = path.join(dir, 'https.ips');
+  if (fs.existsSync(kf) && fs.existsSync(mf) && fs.readFileSync(mf, 'utf8') === marca) return { key: fs.readFileSync(kf), cert: fs.readFileSync(cf) };
+  fs.mkdirSync(dir, { recursive: true });
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const keyPem = privateKey.export({ type: 'pkcs1', format: 'pem' });
+  const key = forge.pki.privateKeyFromPem(keyPem);
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = forge.pki.setRsaPublicKey(key.n, key.e);
+  cert.serialNumber = crypto.randomBytes(8).toString('hex');
+  cert.validity.notBefore = new Date(Date.now() - 86400000);
+  cert.validity.notAfter = new Date(Date.now() + 800 * 86400000);
+  const nome = [{ name: 'commonName', value: 'Ponto DIXI-MVP (rede local)' }];
+  cert.setSubject(nome); cert.setIssuer(nome);
+  cert.setExtensions([{ name: 'basicConstraints', cA: false }, { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+    { name: 'extKeyUsage', serverAuth: true },
+    { name: 'subjectAltName', altNames: [{ type: 2, value: 'localhost' }, { type: 7, ip: '127.0.0.1' }, ...ips.map((ip) => ({ type: 7, ip }))] }]);
+  cert.sign(key, forge.md.sha256.create());
+  const certPem = forge.pki.certificateToPem(cert);
+  fs.writeFileSync(kf, keyPem); fs.writeFileSync(cf, certPem); fs.writeFileSync(mf, marca);
+  return { key: keyPem, cert: certPem };
+}
+
 function iniciar(db, porta) {
-  const srv = http.createServer(criarApp(db));
+  const handler = criarApp(db);
+  const srv = http.createServer(handler);
   const sync = async () => {
     const s = await horaLegal.sincronizar();
     for (const e of db.prepare('SELECT id FROM empresas').all()) {
@@ -305,7 +350,12 @@ function iniciar(db, porta) {
     }
   };
   sync(); setInterval(sync, 6 * 3600e3).unref();
-  return new Promise((r) => srv.listen(porta, () => r(srv)));
+  let srvs = null;
+  if (process.env.DIXI_SEM_HTTPS !== '1') {
+    try { srvs = https.createServer(certificadoHttps(), handler); srvs.on('error', (e) => console.error('HTTPS indisponível:', e.message)); srvs.listen(PORTA_HTTPS, '0.0.0.0'); }
+    catch (e) { console.error('HTTPS indisponível:', e.message); }
+  }
+  return new Promise((r) => srv.listen(porta, '0.0.0.0', () => r(srv)));
 }
 
-module.exports = { criarApp, iniciar, hashSenha, validarCPF, semearFeriados };
+module.exports = { criarApp, iniciar, urlsCelular, hashSenha, validarCPF, semearFeriados };

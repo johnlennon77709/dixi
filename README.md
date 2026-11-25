@@ -19,7 +19,16 @@ npm test         # 18 testes (regras da CLT, NSR/hash, AFD, assinatura)
 | App de ponto em modo quiosque (tablet, facial) | http://localhost:3000/ponto.html?token=demo-quiosque | PIN de todos: `1234` |
 | App de ponto no celular (GPS + cerca virtual) | http://localhost:3000/ponto.html?token=demo-app | CPF `529.982.247-25`, PIN `1234` |
 
-> A câmera e o GPS só funcionam em `localhost` ou em HTTPS. Para usar no celular, publique atrás de HTTPS (ex.: Caddy/Nginx, Cloudflare Tunnel).
+## Versão para celular
+
+O PC funciona como servidor e o celular acessa pela **mesma rede Wi-Fi**:
+
+1. Rode o sistema no PC (`INICIAR.bat` ou `npm start`). Se o Windows perguntar sobre o Firewall, clique em **Permitir** (rede privada).
+2. No painel do RH, abra a aba **📱 Celular** e escaneie o QR code com a câmera do celular.
+3. O celular vai avisar que a conexão não é particular. Isso acontece porque o certificado HTTPS é gerado pelo próprio PC. Toque em **Avançado → Continuar**.
+4. Permita câmera e localização. Para usar como app, toque em **Adicionar à tela inicial** (no iPhone: Compartilhar → Adicionar à Tela de Início).
+
+O servidor HTTPS da rede local usa a porta `3443` (`PORT_HTTPS`). O HTTPS é obrigatório porque os navegadores só liberam câmera e GPS em conexões seguras. Para acessar de fora da rede local, publique o sistema num servidor com domínio e HTTPS (ex.: Caddy, Nginx, Cloudflare Tunnel).
 
 ## O que o REA pedia × o que foi implementado
 

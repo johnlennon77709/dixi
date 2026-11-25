@@ -29,6 +29,8 @@ echo  ==========================================================
 echo   Sistema rodando! NAO feche esta janela.
 echo   Painel do RH:  http://localhost:3000   (admin@demo.com / demo123)
 echo   Bater ponto:   http://localhost:3000/ponto.html?token=demo-quiosque   (PIN 1234)
+echo   Celular: veja o endereco https:// abaixo ou o QR code na aba Celular do painel.
+echo   Se o Windows perguntar sobre o Firewall, clique em PERMITIR.
 echo   O navegador abre sozinho. Se nao abrir, digite o endereco acima.
 echo  ==========================================================
 echo.

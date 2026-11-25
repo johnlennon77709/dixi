@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b6bcb"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="/icone.svg">
 <title>Ponto DIXI-MVP</title>
 <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icone.svg"><link rel="stylesheet" href="/estilo.css">
 <style>
@@ -14,7 +14,8 @@
 </style>
 </head>
 <body>
-<header><h1>⏱ Ponto</h1><span id="disp" class="sub"></span><span class="sp"></span><span id="rede" class="tag"></span><span id="fila" class="tag"></span></header>
+<header><h1>⏱ Ponto</h1><span id="disp" class="sub"></span><span class="sp"></span><span id="rede" class="tag"></span><span id="fila" class="tag"></span><button class="b sec oculto" id="instalar">Instalar app</button></header>
+<p id="dicaIos" class="sub oculto" style="text-align:center;margin:8px">Para instalar no iPhone: toque em <b>Compartilhar</b> ⬆ e depois em <b>Adicionar à Tela de Início</b>.</p>
 <main class="centro">
   <section id="config" class="card oculto">
     <h2>Configurar dispositivo</h2>
@@ -55,6 +56,13 @@ if (qs.get('token')) { LS.set('token', qs.get('token')); history.replaceState(nu
 let token = LS.get('token'); let dados = LS.get('sync'); let offsetMs = LS.get('offset', 0); let stream = null;
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+// Instalar como app na tela inicial
+let pedidoInstalar = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pedidoInstalar = e; $('instalar').classList.remove('oculto'); });
+$('instalar').onclick = async () => { if (!pedidoInstalar) return; pedidoInstalar.prompt(); await pedidoInstalar.userChoice; pedidoInstalar = null; $('instalar').classList.add('oculto'); };
+const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+if (/iphone|ipad/i.test(navigator.userAgent) && !standalone) $('dicaIos').classList.remove('oculto');
+if (!window.isSecureContext) setTimeout(() => mostrar('Câmera e GPS só funcionam em HTTPS. No celular use o endereço https:// mostrado no painel (aba Celular).', false), 500);
 
 const agora = () => new Date(Date.now() + offsetMs);
 const pad = (n) => String(n).padStart(2, '0');

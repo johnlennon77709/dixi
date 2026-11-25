@@ -70,7 +70,7 @@ async function entrar(t) {
 }
 
 // ---------- navegação ----------
-const ABAS = { espelho: 'Espelho', marcacoes: 'Marcações', ajustes: 'Ajustes', funcionarios: 'Funcionários', escalas: 'Escalas', dispositivos: 'Dispositivos', fiscal: 'Fiscal e folha', auditoria: 'Auditoria' };
+const ABAS = { espelho: 'Espelho', marcacoes: 'Marcações', ajustes: 'Ajustes', funcionarios: 'Funcionários', escalas: 'Escalas', dispositivos: 'Dispositivos', fiscal: 'Fiscal e folha', celular: '📱 Celular', auditoria: 'Auditoria' };
 function abrir(aba) {
   $('nav').innerHTML = Object.entries(ABAS).map(([k, v]) => `<button class="${k === aba ? 'ativo' : ''}" data-aba="${k}">${v}</button>`).join('');
   $('nav').querySelectorAll('button').forEach((b) => (b.onclick = () => abrir(b.dataset.aba)));
@@ -211,6 +211,26 @@ const TELAS = {
     ligarCompetencia(() => {});
     $('conteudo').querySelectorAll('[data-u]').forEach((b) => (b.onclick = () => baixar(`${b.dataset.u}?competencia=${competencia}`)));
     $('banco').onchange = () => api('PUT', '/api/empresa', { usa_banco_horas: $('banco').checked });
+  },
+
+  // ---------- celular ----------
+  async celular() {
+    const [rede, ds] = await Promise.all([api('GET', '/api/rede'), api('GET', '/api/dispositivos')]);
+    const base = rede.urls[0];
+    const qr = (texto) => `<img alt="QR code" width="180" height="180" style="background:#fff;border-radius:8px" src="/api/qr?texto=${encodeURIComponent(texto)}&token=${encodeURIComponent(TOKEN)}">`;
+    if (!base) { $('conteudo').innerHTML = '<div class="card">Este PC não está conectado a uma rede Wi-Fi/cabo. Conecte-o à mesma rede do celular e recarregue.</div>'; return; }
+    const apps = ds.filter((d) => d.tipo !== 'web');
+    $('conteudo').innerHTML = `<div class="card"><h2>Usar no celular</h2>
+      <ol><li>Conecte o celular no <b>mesmo Wi-Fi</b> deste computador.</li>
+      <li>Abra a câmera do celular e aponte para o QR code.</li>
+      <li>O celular vai avisar <i>"Sua conexão não é particular"</i>: toque em <b>Avançado → Continuar</b> (Android) ou <b>Mostrar detalhes → visitar este site</b> (iPhone). É seguro: o certificado é deste PC.</li>
+      <li>Permita <b>câmera</b> e <b>localização</b> quando o navegador pedir.</li>
+      <li>Para virar app: menu do navegador → <b>Adicionar à tela inicial</b>.</li></ol>
+      <p class="sub">Se o celular não abrir, libere o Node.js no Firewall do Windows (rede privada) e confira se o Wi-Fi não é de convidados.</p></div>
+      <div class="kpis" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+      ${apps.map((d) => { const u = `${base}/ponto.html?token=${encodeURIComponent(d.token)}`; return `<div class="card" style="text-align:center"><h2>Bater ponto — ${esc(d.nome)}</h2>${qr(u)}<p class="sub" style="word-break:break-all">${esc(u)}</p><p class="sub">${d.tipo === 'app' ? 'celular do funcionário (CPF + PIN + GPS)' : 'tablet/quiosque (reconhecimento facial)'}</p></div>`; }).join('')}
+      <div class="card" style="text-align:center"><h2>Painel do RH</h2>${qr(base + '/')}<p class="sub">${esc(base)}/</p></div></div>
+      <p class="sub">Outros endereços deste PC: ${rede.urls.map(esc).join(' · ')}</p>`;
   },
 
   // ---------- auditoria ----------
