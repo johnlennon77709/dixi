@@ -1,9 +1,11 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Painel de Ponto</title>
 <link rel="icon" href="/icone.svg"><link rel="stylesheet" href="/estilo.css">
+<link rel="manifest" href="/painel.webmanifest"><meta name="theme-color" content="#0b6bcb">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Painel RH"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
 <section id="login" class="login card oculto">
@@ -24,8 +26,9 @@
 <div id="app" class="oculto">
 <header>
   <h1>⏱ Ponto</h1><span id="empNome" class="sub"></span><span class="sp"></span>
-  <nav id="nav"></nav><button class="b sec" id="sair">Sair</button>
+  <nav id="nav"></nav><button class="b oculto" id="instalar">Instalar app</button><button class="b sec" id="sair">Sair</button>
 </header>
+<div id="offline" class="msg err oculto" style="margin:8px 16px">📴 Sem conexão com o servidor: mostrando os últimos dados salvos neste aparelho (somente leitura).</div>
 <main id="conteudo"></main>
 </div>
 
@@ -35,12 +38,15 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = (m) => { m = Math.round(m || 0); const n = m < 0; m = Math.abs(m); return (n ? '-' : '') + String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
 const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-let TOKEN = null; try { TOKEN = sessionStorage.getItem('tok'); } catch {}
+let TOKEN = null; try { TOKEN = sessionStorage.getItem('tok') || localStorage.getItem('tok'); } catch {}
 const hoje = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
 let competencia = hoje.slice(0, 7);
 
 async function api(metodo, url, body) {
-  const r = await fetch(url, { method: metodo, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN }, body: body ? JSON.stringify(body) : undefined });
+  let r;
+  try { r = await fetch(url, { method: metodo, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN }, body: body ? JSON.stringify(body) : undefined }); }
+  catch { $('offline').classList.remove('oculto'); throw new Error(metodo === 'GET' ? 'Sem conexão e sem dados salvos para esta tela.' : 'Sem conexão: alterações só podem ser feitas com o servidor acessível.'); }
+  $('offline').classList.toggle('oculto', r.headers.get('x-offline') !== '1');
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && TOKEN) { sair(); }
   if (!r.ok) throw new Error(j.erro || r.statusText);
@@ -48,7 +54,18 @@ async function api(metodo, url, body) {
 }
 const baixar = (url) => { const sep = url.includes('?') ? '&' : '?'; window.open(url + sep + 'token=' + encodeURIComponent(TOKEN), '_blank'); };
 function aviso(el, txt, ok) { el.innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${esc(txt)}</div>`; }
-function sair() { TOKEN = null; try { sessionStorage.removeItem('tok'); } catch {} mostrarLogin(); }
+function sair() {
+  TOKEN = null; try { sessionStorage.removeItem('tok'); localStorage.removeItem('tok'); } catch {}
+  // apaga a cópia offline dos dados do painel ao sair
+  if (window.caches) caches.keys().then((ks) => ks.forEach((k) => caches.open(k).then((c) => c.keys().then((rs) => rs.forEach((r) => new URL(r.url).pathname.startsWith('/api/') && c.delete(r))))));
+  mostrarLogin();
+}
+// ---------- PWA ----------
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+let pedidoInstalar = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pedidoInstalar = e; $('instalar').classList.remove('oculto'); });
+$('instalar').onclick = async () => { if (!pedidoInstalar) return; pedidoInstalar.prompt(); await pedidoInstalar.userChoice; pedidoInstalar = null; $('instalar').classList.add('oculto'); };
+window.addEventListener('appinstalled', () => $('instalar').classList.add('oculto'));
 
 // ---------- login ----------
 function mostrarLogin() { $('login').classList.remove('oculto'); $('app').classList.add('oculto'); }
@@ -63,7 +80,7 @@ $('btCadastro').onclick = async () => {
 };
 $('sair').onclick = sair;
 async function entrar(t) {
-  TOKEN = t; try { sessionStorage.setItem('tok', t); } catch {}
+  TOKEN = t; try { sessionStorage.setItem('tok', t); localStorage.setItem('tok', t); } catch {}
   $('login').classList.add('oculto'); $('app').classList.remove('oculto');
   const e = await api('GET', '/api/empresa'); $('empNome').textContent = `${e.razao_social} · CNPJ ${e.cnpj}`;
   abrir('espelho');

@@ -14,7 +14,7 @@ const { espelho } = require('./servico');
 const horaLegal = require('./horalegal');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.bin': 'application/octet-stream' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.bin': 'application/octet-stream', '.png': 'image/png' };
 
 // ---------- segurança ----------
 function hashSenha(s) {
@@ -91,7 +91,11 @@ function criarApp(db) {
     const ano = Number(T.dataBR(new Date()).slice(0, 4)); semearFeriados(db, ano); semearFeriados(db, ano + 1);
     return { token: assinar({ u: email, e: Number(e.lastInsertRowid), exp: Date.now() + 12 * 3600e3 }) };
   });
-  rota('POST', '/api/login', null, ({ body }) => {
+  rota('POST', '/api/login', null, ({ body, host }) => {
+    // Pela internet (túnel), a conta de demonstração com senha pública fica bloqueada.
+    if (/trycloudflare\.com$/.test(host || '') && String(body.email || '').toLowerCase() === 'admin@demo.com') {
+      throw erro(403, 'Pela internet, a conta de demonstração é bloqueada por segurança. Crie a sua conta em "Criar empresa".');
+    }
     const u = db.prepare('SELECT * FROM usuarios WHERE email=?').get(String(body.email || '').toLowerCase());
     if (!u || !conferirSenha(body.senha, u.senha_hash)) throw erro(401, 'e-mail ou senha incorretos');
     return { token: assinar({ u: u.email, e: u.empresa_id, exp: Date.now() + 12 * 3600e3 }), nome: u.nome };
@@ -256,7 +260,7 @@ function criarApp(db) {
       if (!url.pathname.startsWith('/api/')) return estatico(url.pathname, res);
       const r = rotas.find((x) => x.metodo === req.method && x.re.test(url.pathname));
       if (!r) throw erro(404, 'rota não encontrada');
-      const ctx = { params: url.pathname.match(r.re).groups || {}, q: url.searchParams, body: {} };
+      const ctx = { params: url.pathname.match(r.re).groups || {}, q: url.searchParams, body: {}, host: String(req.headers.host || '').split(':')[0] };
       if (req.method === 'POST' || req.method === 'PUT') ctx.body = await lerCorpo(req);
       if (r.auth === 'rh') {
         const t = lerToken((req.headers.authorization || '').replace('Bearer ', '') || url.searchParams.get('token'));
@@ -299,7 +303,9 @@ function estatico(p, res) {
   if (p.startsWith('/vendor/face-api/')) { base = FACE_API; p = p.slice('/vendor/face-api'.length); }
   const f = path.normalize(path.join(base, p));
   if (!f.startsWith(base) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end('não encontrado'); }
-  res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream', 'cache-control': 'no-cache' });
+  const h = { 'content-type': MIME[path.extname(f)] || 'application/octet-stream', 'cache-control': 'no-cache' };
+  if (p === '/sw.js') h['service-worker-allowed'] = '/';
+  res.writeHead(200, h);
   fs.createReadStream(f).pipe(res);
 }
 
@@ -313,7 +319,7 @@ function ipsLocais() {
   // redes domésticas (192.168.x / 10.x) primeiro
   return ips.sort((a, b) => (/^(192\.168|10\.)/.test(b) ? 1 : 0) - (/^(192\.168|10\.)/.test(a) ? 1 : 0));
 }
-const urlsCelular = () => ipsLocais().map((ip) => `https://${ip}:${PORTA_HTTPS}`);
+const urlsCelular = () => [require('./tunel').endereco(), ...ipsLocais().map((ip) => `https://${ip}:${PORTA_HTTPS}`)].filter(Boolean);
 function certificadoHttps() {
   const forge = require('node-forge');
   const dir = path.join(__dirname, '..', 'data', 'certs');

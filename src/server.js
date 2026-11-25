@@ -22,6 +22,21 @@ iniciar(db, porta).then(() => {
     console.log('    Ou escaneie o QR code na aba "Celular" do painel.');
     console.log('    O celular vai avisar "conexão não particular": toque em Avançado > Continuar.');
   }
+  if (process.env.DIXI_TUNEL === '1') {
+    const tunel = require('./tunel');
+    console.log('\n  Abrindo endereço HTTPS na internet (Cloudflare)...');
+    tunel.iniciar(porta);
+    tunel.quandoPronto((u) => {
+      console.log('\n  ==========================================================');
+      console.log(`   ENDEREÇO PARA O CELULAR (qualquer rede, inclusive 4G):`);
+      console.log(`     Bater ponto ... ${u}/ponto.html?token=demo-app`);
+      console.log(`     Painel do RH .. ${u}/`);
+      console.log('   Pode instalar como app: menu do navegador > Instalar app.');
+      console.log('   O endereço muda cada vez que o sistema é reiniciado.');
+      console.log('   Por segurança, a conta admin@demo.com não entra por este endereço.');
+      console.log('  ==========================================================\n');
+    });
+  }
   // Abre o navegador só depois que o servidor já está ouvindo (evita "página não encontrada").
   if (process.env.DIXI_ABRIR) {
     const { exec } = require('node:child_process');

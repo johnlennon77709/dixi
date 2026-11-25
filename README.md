@@ -19,7 +19,29 @@ npm test         # 18 testes (regras da CLT, NSR/hash, AFD, assinatura)
 | App de ponto em modo quiosque (tablet, facial) | http://localhost:3000/ponto.html?token=demo-quiosque | PIN de todos: `1234` |
 | App de ponto no celular (GPS + cerca virtual) | http://localhost:3000/ponto.html?token=demo-app | CPF `529.982.247-25`, PIN `1234` |
 
-## Versão para celular
+## PWA (app instalável)
+
+O sistema tem **dois apps instaláveis** que compartilham o mesmo servidor:
+
+| App | Endereço | Offline |
+|---|---|---|
+| **Bater ponto** | `/ponto.html` | Abre sem internet, faz reconhecimento facial local e guarda as marcações numa fila que é enviada quando a conexão volta |
+| **Painel RH** | `/` | Abre sem internet e mostra os últimos dados vistos (somente leitura, com aviso na tela). Ao sair, a cópia local é apagada |
+
+Para instalar, use o botão **Instalar app** (ou o menu do navegador → *Instalar app* / *Adicionar à tela inicial*). No PC funciona direto em `http://localhost:3000`. O service worker (`public/sw.js`) guarda as telas, os ícones e os modelos de reconhecimento facial (~13 MB) em cache.
+
+### Instalar no celular: use o INICIAR-COM-INTERNET.bat
+
+O celular **só instala PWA com certificado HTTPS válido**. O certificado gerado pelo PC (modo Wi-Fi abaixo) permite abrir o site, mas não instalar o app nem usar o modo offline. Por isso existe o **`INICIAR-COM-INTERNET.bat`**:
+
+- ele baixa o `cloudflared` e cria um endereço `https://xxxx.trycloudflare.com` com certificado válido (gratuito, sem conta);
+- funciona em qualquer rede, inclusive 4G, enquanto o PC estiver ligado;
+- o endereço muda a cada reinício, e o QR code atualizado aparece na aba **📱 Celular**;
+- **segurança:** o endereço é público. Crie sua própria conta com senha forte, porque a conta de demonstração é bloqueada por esse endereço.
+
+Para algo definitivo, publique o sistema num servidor com domínio próprio e HTTPS.
+
+## Versão para celular (Wi-Fi, sem instalar)
 
 O PC funciona como servidor e o celular acessa pela **mesma rede Wi-Fi**:
 
