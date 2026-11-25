@@ -29,8 +29,9 @@ echo  ==========================================================
 echo   Sistema rodando! NAO feche esta janela.
 echo   Painel do RH:  http://localhost:3000   (admin@demo.com / demo123)
 echo   Bater ponto:   http://localhost:3000/ponto.html?token=demo-quiosque   (PIN 1234)
+echo   O navegador abre sozinho. Se nao abrir, digite o endereco acima.
 echo  ==========================================================
 echo.
-start "" http://localhost:3000
+set DIXI_ABRIR=1
 call npm start
 pause
