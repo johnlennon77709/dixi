@@ -1,0 +1,2 @@
+{ "name": "DIXI-MVP Ponto", "short_name": "Ponto", "start_url": "/ponto.html", "display": "standalone", "background_color": "#11151c", "theme_color": "#0b6bcb",
+  "icons": [{ "src": "/icone.svg", "sizes": "any", "type": "image/svg+xml" }] }

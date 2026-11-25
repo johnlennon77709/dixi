@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel de Ponto</title>
+<link rel="icon" href="/icone.svg"><link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+<section id="login" class="login card oculto">
+  <h2>Painel do RH</h2>
+  <div id="formLogin">
+    <input id="email" placeholder="e-mail" value="admin@demo.com"><input id="senha" type="password" placeholder="senha" value="demo123">
+    <button class="b" id="btLogin" style="width:100%">Entrar</button>
+    <p class="sub">Demo: admin@demo.com / demo123 (rode <code>npm run seed</code>). <a href="#" id="irCadastro">Criar empresa</a></p>
+  </div>
+  <div id="formCadastro" class="oculto">
+    <input id="cRazao" placeholder="Razão social"><input id="cCnpj" placeholder="CNPJ"><input id="cNome" placeholder="Seu nome">
+    <input id="cEmail" placeholder="E-mail"><input id="cSenha" type="password" placeholder="Senha (6+)">
+    <button class="b" id="btCadastro" style="width:100%">Criar conta</button>
+  </div>
+  <div id="msgLogin"></div>
+</section>
+
+<div id="app" class="oculto">
+<header>
+  <h1>⏱ Ponto</h1><span id="empNome" class="sub"></span><span class="sp"></span>
+  <nav id="nav"></nav><button class="b sec" id="sair">Sair</button>
+</header>
+<main id="conteudo"></main>
+</div>
+
+<script src="/face.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = (m) => { m = Math.round(m || 0); const n = m < 0; m = Math.abs(m); return (n ? '-' : '') + String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+let TOKEN = null; try { TOKEN = sessionStorage.getItem('tok'); } catch {}
+const hoje = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+let competencia = hoje.slice(0, 7);
+
+async function api(metodo, url, body) {
+  const r = await fetch(url, { method: metodo, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && TOKEN) { sair(); }
+  if (!r.ok) throw new Error(j.erro || r.statusText);
+  return j;
+}
+const baixar = (url) => { const sep = url.includes('?') ? '&' : '?'; window.open(url + sep + 'token=' + encodeURIComponent(TOKEN), '_blank'); };
+function aviso(el, txt, ok) { el.innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${esc(txt)}</div>`; }
+function sair() { TOKEN = null; try { sessionStorage.removeItem('tok'); } catch {} mostrarLogin(); }
+
+// ---------- login ----------
+function mostrarLogin() { $('login').classList.remove('oculto'); $('app').classList.add('oculto'); }
+$('irCadastro').onclick = (e) => { e.preventDefault(); $('formLogin').classList.add('oculto'); $('formCadastro').classList.remove('oculto'); };
+$('btLogin').onclick = async () => {
+  try { const r = await api('POST', '/api/login', { email: $('email').value, senha: $('senha').value }); entrar(r.token); }
+  catch (e) { aviso($('msgLogin'), e.message); }
+};
+$('btCadastro').onclick = async () => {
+  try { const r = await api('POST', '/api/cadastro', { razao_social: $('cRazao').value, cnpj: $('cCnpj').value, nome: $('cNome').value, email: $('cEmail').value, senha: $('cSenha').value }); entrar(r.token); }
+  catch (e) { aviso($('msgLogin'), e.message); }
+};
+$('sair').onclick = sair;
+async function entrar(t) {
+  TOKEN = t; try { sessionStorage.setItem('tok', t); } catch {}
+  $('login').classList.add('oculto'); $('app').classList.remove('oculto');
+  const e = await api('GET', '/api/empresa'); $('empNome').textContent = `${e.razao_social} · CNPJ ${e.cnpj}`;
+  abrir('espelho');
+}
+
+// ---------- navegação ----------
+const ABAS = { espelho: 'Espelho', marcacoes: 'Marcações', ajustes: 'Ajustes', funcionarios: 'Funcionários', escalas: 'Escalas', dispositivos: 'Dispositivos', fiscal: 'Fiscal e folha', auditoria: 'Auditoria' };
+function abrir(aba) {
+  $('nav').innerHTML = Object.entries(ABAS).map(([k, v]) => `<button class="${k === aba ? 'ativo' : ''}" data-aba="${k}">${v}</button>`).join('');
+  $('nav').querySelectorAll('button').forEach((b) => (b.onclick = () => abrir(b.dataset.aba)));
+  $('conteudo').innerHTML = '<p class="sub">Carregando…</p>';
+  TELAS[aba]().catch((e) => aviso($('conteudo'), e.message));
+}
+const seletorCompetencia = () => `<label class="sub">Competência <input type="month" id="comp" value="${competencia}"></label>`;
+function ligarCompetencia(fn) { $('comp').onchange = () => { competencia = $('comp').value; fn(); }; }
+
+const TELAS = {
+  // ---------- espelho de ponto ----------
+  async espelho() {
+    const funcs = await api('GET', '/api/funcionarios');
+    if (!funcs.length) { $('conteudo').innerHTML = '<div class="card">Cadastre funcionários na aba Funcionários.</div>'; return; }
+    const sel = TELAS._func || funcs[0].id;
+    $('conteudo').innerHTML = `<div class="card"><div class="linha"><select id="func">${funcs.map((f) => `<option value="${f.id}" ${f.id == sel ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}</select>${seletorCompetencia()}</div><div id="esp"></div></div>`;
+    const carregar = async () => {
+      TELAS._func = $('func').value;
+      const e = await api('GET', `/api/espelho/${$('func').value}?competencia=${competencia}`); const t = e.totais;
+      const k = (v, l) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`;
+      $('esp').innerHTML = `<p class="sub">Escala: ${esc(e.escala.nome)} (${e.escala.tipo})</p>
+      <div class="kpis">${k(fmt(t.trabalhado), 'trabalhadas')}${k(fmt(t.previsto), 'previstas')}${k(fmt(t.extra50), 'HE 50%')}${k(fmt(t.extra100), 'HE 100%')}
+      ${k(fmt(t.falta), 'faltas/atrasos')}${k(fmt(t.noturnoReduzido), 'adic. noturno (h reduzida)')}${k(fmt(t.intervaloSuprimido), 'intervalo suprimido')}
+      ${k(fmt(t.interjornadaViolada), 'interjornada violada')}${k(fmt(t.dsrReflexo), 'DSR s/ HE')}${k(fmt(t.bancoSaldo), 'saldo banco de horas')}${k(t.inconsistencias, 'dias inconsistentes')}</div>
+      <div class="tabela" style="margin-top:12px"><table><tr><th>Data</th><th>Marcações</th><th>Trab.</th><th>Prev.</th><th>HE50</th><th>HE100</th><th>Falta</th><th>Not.</th><th>Obs.</th><th></th></tr>
+      ${e.dias.map((d) => {
+        const obs = [d.feriado && 'feriado', d.inconsistente && 'marcação ímpar', d.intervaloSuprimido && `intervalo -${fmt(d.intervaloSuprimido)}`, d.interjornadaViolada && `interjornada -${fmt(d.interjornadaViolada)}`, d.toleranciaAplicada && 'tolerância', d.abono && `abono ${fmt(d.abono)}`].filter(Boolean).join(', ');
+        const alerta = d.inconsistente || d.intervaloSuprimido || d.interjornadaViolada || d.falta;
+        return `<tr class="${!d.previsto && !d.trabalhado ? 'folga' : alerta ? 'alerta' : ''}"><td>${d.data.split('-').reverse().join('/')} ${DIAS[d.diaSemana]}</td><td>${d.batidas.join(' ')}</td>
+        <td>${fmt(d.trabalhado)}</td><td>${fmt(d.previsto)}</td><td>${d.extra50 ? fmt(d.extra50) : ''}</td><td>${d.extra100 ? fmt(d.extra100) : ''}</td><td>${d.falta ? fmt(d.falta) : ''}</td><td>${d.noturno ? fmt(d.noturno) : ''}</td>
+        <td class="sub">${obs}</td><td><button class="b sec" data-dia="${d.data}">tratar</button></td></tr>`;
+      }).join('')}</table></div><div id="tratar"></div>`;
+      $('esp').querySelectorAll('[data-dia]').forEach((b) => (b.onclick = () => tratarDia(e, b.dataset.dia)));
+    };
+    $('func').onchange = carregar; ligarCompetencia(carregar); await carregar();
+  },
+
+  // ---------- marcações ----------
+  async marcacoes() {
+    $('conteudo').innerHTML = `<div class="card"><div class="linha">${seletorCompetencia()}</div><div id="lst"></div></div>`;
+    const carregar = async () => {
+      const ms = await api('GET', `/api/marcacoes?competencia=${competencia}`);
+      $('lst').innerHTML = `<div class="tabela"><table><tr><th>NSR</th><th>Funcionário</th><th>Data/hora</th><th>Gravação</th><th>Modo</th><th>Método</th><th>Local</th><th>Comprovante</th></tr>
+      ${ms.map((m) => `<tr><td>${m.nsr}</td><td>${esc(m.nome)}</td><td>${m.data_hora.slice(0, 16).replace('T', ' ')}</td><td class="sub">${m.data_hora_gravacao.slice(0, 16).replace('T', ' ')}</td>
+      <td>${m.online ? 'online' : '<span class="tag">offline</span>'}</td><td>${m.metodo}</td><td class="sub">${m.latitude != null ? m.latitude.toFixed(4) + ',' + m.longitude.toFixed(4) : ''}</td>
+      <td><a href="#" data-c="${m.id}">PDF</a></td></tr>`).join('')}</table></div><p class="sub">Marcações são imutáveis: correções são feitas como ajustes (tratamento), preservando o registro original.</p>`;
+      $('lst').querySelectorAll('[data-c]').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); baixar('/api/comprovante/' + a.dataset.c); }));
+    };
+    ligarCompetencia(carregar); await carregar();
+  },
+
+  // ---------- ajustes ----------
+  async ajustes() {
+    const aj = await api('GET', '/api/ajustes');
+    $('conteudo').innerHTML = `<div class="card"><h2>Ajustes (tratamento de ponto)</h2><div id="m"></div><div class="tabela"><table><tr><th>Funcionário</th><th>Tipo</th><th>Data</th><th>Detalhe</th><th>Motivo</th><th>Status</th><th></th></tr>
+    ${aj.map((a) => `<tr><td>${esc(a.nome)}</td><td>${a.tipo}</td><td>${a.data.split('-').reverse().join('/')}</td><td>${a.hora || (a.minutos ? fmt(a.minutos) : '') || (a.marcacao_id ? 'marcação #' + a.marcacao_id : '')}</td>
+    <td>${esc(a.motivo)}</td><td><span class="tag">${a.status}</span></td>
+    <td>${a.status === 'pendente' ? `<button class="b ok" data-ok="${a.id}">Aprovar</button> <button class="b err" data-no="${a.id}">Rejeitar</button>` : `<span class="sub">${esc(a.decidido_por || '')}</span>`}</td></tr>`).join('')}</table></div></div>`;
+    const decidir = async (id, status) => { try { await api('POST', `/api/ajustes/${id}/decidir`, { status }); TELAS.ajustes(); } catch (e) { aviso($('m'), e.message); } };
+    $('conteudo').querySelectorAll('[data-ok]').forEach((b) => (b.onclick = () => decidir(b.dataset.ok, 'aprovado')));
+    $('conteudo').querySelectorAll('[data-no]').forEach((b) => (b.onclick = () => decidir(b.dataset.no, 'rejeitado')));
+  },
+
+  // ---------- funcionários ----------
+  async funcionarios() {
+    const [fs, es, est] = await Promise.all([api('GET', '/api/funcionarios'), api('GET', '/api/escalas'), api('GET', '/api/estabelecimentos')]);
+    const opEsc = (sel) => `<option value="">padrão 8h</option>` + es.map((e) => `<option value="${e.id}" ${e.id == sel ? 'selected' : ''}>${esc(e.nome)}</option>`).join('');
+    $('conteudo').innerHTML = `<div class="card"><h2>Novo funcionário</h2><div class="linha">
+      <input id="fNome" placeholder="Nome"><input id="fCpf" placeholder="CPF"><input id="fMat" placeholder="Matrícula" size="8"><input id="fPin" placeholder="PIN" size="6">
+      <input id="fAdm" type="date" title="Admissão"><select id="fEsc">${opEsc()}</select><select id="fEst"><option value="">sem estabelecimento</option>${est.map((e) => `<option value="${e.id}">${esc(e.nome)}</option>`).join('')}</select>
+      <button class="b" id="fAdd">Adicionar</button></div><div id="m"></div></div>
+      <div class="card"><h2>Funcionários</h2><div class="tabela"><table><tr><th>Nome</th><th>CPF</th><th>Matr.</th><th>Escala</th><th>PIN</th><th>Biometria facial</th><th></th></tr>
+      ${fs.map((f) => `<tr><td>${esc(f.nome)}</td><td>${f.cpf}</td><td>${esc(f.matricula || '')}</td><td><select data-esc="${f.id}">${opEsc(f.escala_id)}</select></td><td>${f.tem_pin ? '✔' : '—'}</td>
+      <td>${f.tem_face ? '✔ <span class="sub">consentida em ' + esc((f.consentimento_biometria || '').slice(0, 10)) + '</span>' : '—'}</td>
+      <td><button class="b sec" data-face="${f.id}" data-nome="${esc(f.nome)}">${f.tem_face ? 'Recadastrar' : 'Cadastrar'} rosto</button> ${f.tem_face ? `<button class="b sec" data-rm="${f.id}">Remover</button>` : ''}</td></tr>`).join('')}</table></div></div>
+      <div id="biometria"></div>`;
+    $('fAdd').onclick = async () => {
+      try { await api('POST', '/api/funcionarios', { nome: $('fNome').value, cpf: $('fCpf').value, matricula: $('fMat').value, pin: $('fPin').value, admissao: $('fAdm').value || null, escala_id: $('fEsc').value || null, estabelecimento_id: $('fEst').value || null }); TELAS.funcionarios(); }
+      catch (e) { aviso($('m'), e.message); }
+    };
+    $('conteudo').querySelectorAll('[data-esc]').forEach((s) => (s.onchange = () => api('PUT', '/api/funcionarios/' + s.dataset.esc, { escala_id: s.value || null })));
+    $('conteudo').querySelectorAll('[data-rm]').forEach((b) => (b.onclick = async () => { await api('PUT', '/api/funcionarios/' + b.dataset.rm, { remover_biometria: true }); TELAS.funcionarios(); }));
+    $('conteudo').querySelectorAll('[data-face]').forEach((b) => (b.onclick = () => cadastrarRosto(b.dataset.face, b.dataset.nome)));
+  },
+
+  // ---------- escalas ----------
+  async escalas() {
+    const es = await api('GET', '/api/escalas');
+    const desc = (e) => e.tipo === 'fixa' ? Object.entries(e.config.dias).map(([d, v]) => `${DIAS[d]} ${v.entrada}-${v.saida} (int ${v.intervalo}m)`).join('; ')
+      : e.tipo === '12x36' ? `início do ciclo ${e.config.inicio}, entrada ${e.config.entrada}, ${e.config.horas || 12}h, int ${e.config.intervalo ?? 60}m` : `${fmt(e.config.carga)} por dia, int ${e.config.intervalo ?? 60}m, dias ${(e.config.dias || [1, 2, 3, 4, 5]).map((d) => DIAS[d]).join(',')}`;
+    $('conteudo').innerHTML = `<div class="card"><h2>Nova escala</h2><div class="linha"><input id="eNome" placeholder="Nome"><select id="eTipo"><option value="fixa">Fixa (seg-sex)</option><option value="12x36">12x36</option><option value="flexivel">Flexível</option></select></div>
+      <div class="linha" id="eCampos"></div><button class="b" id="eAdd">Salvar escala</button><div id="m"></div></div>
+      <div class="card"><h2>Escalas</h2><div class="tabela"><table><tr><th>Nome</th><th>Tipo</th><th>Configuração</th></tr>${es.map((e) => `<tr><td>${esc(e.nome)}</td><td>${e.tipo}</td><td class="sub">${esc(desc(e))}</td></tr>`).join('')}</table></div></div>`;
+    const campos = () => {
+      const t = $('eTipo').value;
+      $('eCampos').innerHTML = t === 'fixa' ? '<input id="eEnt" type="time" value="08:00"><input id="eSai" type="time" value="17:00"><input id="eInt" type="number" value="60" size="4" title="intervalo (min)"><label class="sub"><input type="checkbox" id="eSab"> sábado 08-12</label>'
+        : t === '12x36' ? '<input id="eIni" type="date" value="' + hoje + '" title="dia trabalhado do ciclo"><input id="eEnt" type="time" value="19:00"><input id="eInt" type="number" value="60" size="4" title="intervalo (min)">'
+        : '<input id="eCarga" type="number" value="480" title="carga diária (min)"><input id="eInt" type="number" value="60" size="4" title="intervalo (min)">';
+    };
+    $('eTipo').onchange = campos; campos();
+    $('eAdd').onclick = async () => {
+      const t = $('eTipo').value; let config;
+      if (t === 'fixa') { const d = { entrada: $('eEnt').value, saida: $('eSai').value, intervalo: Number($('eInt').value) }; config = { dias: { 1: d, 2: d, 3: d, 4: d, 5: d } }; if ($('eSab').checked) config.dias[6] = { entrada: '08:00', saida: '12:00', intervalo: 0 }; }
+      else if (t === '12x36') config = { inicio: $('eIni').value, entrada: $('eEnt').value, horas: 12, intervalo: Number($('eInt').value) };
+      else config = { carga: Number($('eCarga').value), intervalo: Number($('eInt').value), dias: [1, 2, 3, 4, 5] };
+      try { await api('POST', '/api/escalas', { nome: $('eNome').value, tipo: t, config }); TELAS.escalas(); } catch (e) { aviso($('m'), e.message); }
+    };
+  },
+
+  // ---------- dispositivos ----------
+  async dispositivos() {
+    const [ds, est] = await Promise.all([api('GET', '/api/dispositivos'), api('GET', '/api/estabelecimentos')]);
+    $('conteudo').innerHTML = `<div class="card"><h2>Novo dispositivo</h2><div class="linha"><input id="dNome" placeholder="Nome (ex.: Tablet da recepção)">
+      <select id="dTipo"><option value="quiosque">Quiosque/tablet (facial)</option><option value="app">App no celular (GPS)</option><option value="web">Navegador</option></select>
+      <select id="dEst"><option value="">sem estabelecimento</option>${est.map((e) => `<option value="${e.id}">${esc(e.nome)}</option>`).join('')}</select><button class="b" id="dAdd">Criar</button></div></div>
+      <div class="card"><h2>Dispositivos</h2><div class="tabela"><table><tr><th>Nome</th><th>Tipo</th><th>Coletor</th><th>Último contato</th><th>Abrir app de ponto</th></tr>
+      ${ds.map((d) => `<tr><td>${esc(d.nome)}</td><td>${d.tipo}</td><td>${d.numero_coletor}</td><td class="sub">${esc((d.ultimo_contato || '—').slice(0, 16).replace('T', ' '))}</td>
+      <td><a href="/ponto.html?token=${encodeURIComponent(d.token)}" target="_blank">abrir</a> <span class="sub">token: <code>${esc(d.token)}</code></span></td></tr>`).join('')}</table></div>
+      <p class="sub">Abra o link no tablet/celular. O app funciona offline e envia as marcações quando a internet volta.</p></div>
+      <div class="card"><h2>Estabelecimentos (cerca virtual)</h2><div class="linha"><input id="sNome" placeholder="Nome"><input id="sEnd" placeholder="Endereço"><input id="sLat" placeholder="Latitude" size="9"><input id="sLon" placeholder="Longitude" size="9"><input id="sRaio" placeholder="Raio (m)" size="6" value="200"><button class="b" id="sAdd">Adicionar</button></div>
+      <table>${est.map((e) => `<tr><td>${esc(e.nome)}</td><td class="sub">${esc(e.endereco || '')}</td><td class="sub">${e.latitude ?? ''}, ${e.longitude ?? ''} · raio ${e.raio_metros} m</td></tr>`).join('')}</table><div id="m"></div></div>`;
+    $('dAdd').onclick = async () => { await api('POST', '/api/dispositivos', { nome: $('dNome').value, tipo: $('dTipo').value, estabelecimento_id: $('dEst').value || null }); TELAS.dispositivos(); };
+    $('sAdd').onclick = async () => {
+      try { await api('POST', '/api/estabelecimentos', { nome: $('sNome').value, endereco: $('sEnd').value, latitude: $('sLat').value ? Number($('sLat').value) : null, longitude: $('sLon').value ? Number($('sLon').value) : null, raio_metros: Number($('sRaio').value) || 200 }); TELAS.dispositivos(); }
+      catch (e) { aviso($('m'), e.message); }
+    };
+  },
+
+  // ---------- fiscal e folha ----------
+  async fiscal() {
+    const emp = await api('GET', '/api/empresa');
+    $('conteudo').innerHTML = `<div class="card"><h2>Arquivos fiscais (Portaria 671)</h2><div class="linha">${seletorCompetencia()}</div>
+      <div class="linha"><button class="b" data-u="/api/fiscal/afd">AFD</button><button class="b sec" data-u="/api/fiscal/afd.p7s">Assinatura AFD (.p7s)</button>
+      <button class="b" data-u="/api/fiscal/aej">AEJ</button><button class="b sec" data-u="/api/fiscal/aej.p7s">Assinatura AEJ (.p7s)</button></div>
+      <p class="sub">Assinatura CAdES destacada. Configure seu certificado A1 ICP-Brasil em DIXI_CERT_PFX/DIXI_CERT_SENHA; sem ele é usado um certificado de teste.</p></div>
+      <div class="card"><h2>Exportação para folha</h2><div class="linha"><button class="b" data-u="/api/folha/csv">CSV</button><button class="b" data-u="/api/folha/txt">TXT (largura fixa)</button><button class="b sec" data-u="/api/folha/s1200">eSocial S-1200 (rascunho XML)</button></div>
+      <label class="sub"><input type="checkbox" id="banco" ${emp.usa_banco_horas ? 'checked' : ''}> Empresa usa banco de horas (HE 50% e faltas vão para o banco em vez de serem pagas/descontadas)</label></div>`;
+    ligarCompetencia(() => {});
+    $('conteudo').querySelectorAll('[data-u]').forEach((b) => (b.onclick = () => baixar(`${b.dataset.u}?competencia=${competencia}`)));
+    $('banco').onchange = () => api('PUT', '/api/empresa', { usa_banco_horas: $('banco').checked });
+  },
+
+  // ---------- auditoria ----------
+  async auditoria() {
+    const a = await api('GET', '/api/auditoria');
+    $('conteudo').innerHTML = `<div class="card"><h2>Integridade do REP-P</h2>
+      <div class="msg ${a.cadeia.ok ? 'ok' : 'err'}">${a.cadeia.ok ? `✔ Cadeia de hashes íntegra: ${a.cadeia.registros} marcações, NSR em sequência.` : '✖ ' + esc(a.cadeia.erro)}</div>
+      <p>Hora Legal: fonte <b>${a.horaLegal.fonte === 'ntp' ? 'NTP ' + esc(a.horaLegal.servidor) : 'relógio do sistema'}</b>, offset ${Math.round(a.horaLegal.offsetMs)} ms, sincronizado em ${esc(a.horaLegal.sincronizadoEm || '—')}
+      ${a.horaLegal.erro && a.horaLegal.fonte !== 'ntp' ? `<br><span class="sub">NTP indisponível: ${esc(a.horaLegal.erro)}</span>` : ''}</p>
+      <p>Certificado de assinatura: ${a.certificadoDeTeste ? '<b style="color:var(--warn)">de TESTE</b> (configure o A1 ICP-Brasil para validade jurídica)' : 'A1 configurado'}</p></div>`;
+  },
+};
+
+// ---------- tratamento de um dia ----------
+function tratarDia(e, data) {
+  const ms = e.marcacoes.filter((m) => m.data_hora.slice(0, 10) === data);
+  $('tratar').innerHTML = `<div class="card" style="margin-top:12px"><h2>Tratar ${data.split('-').reverse().join('/')}</h2>
+    <p class="sub">Marcações: ${ms.map((m) => `${m.data_hora.slice(11, 16)}${m.origem === 'incluida' ? ' (incluída)' : ` <a href="#" data-d="${m.id}">desconsiderar</a>`}`).join(' · ') || 'nenhuma'}</p>
+    <div class="linha"><input id="tHora" type="time"><input id="tMotivo" placeholder="Motivo (obrigatório)" style="flex:1"><button class="b" id="tInc">Incluir marcação</button></div>
+    <div class="linha"><input id="tMin" type="number" placeholder="minutos" size="6"><button class="b sec" id="tAbono">Abonar (atestado etc.)</button></div><div id="tm"></div>
+    <p class="sub">Os ajustes entram como pendentes e precisam ser aprovados na aba Ajustes. A marcação original nunca é alterada.</p></div>`;
+  const enviar = async (body) => { try { await api('POST', '/api/ajustes', { funcionario_id: e.funcionario.id, data, motivo: $('tMotivo').value, ...body }); aviso($('tm'), 'Ajuste registrado como pendente.', true); } catch (er) { aviso($('tm'), er.message); } };
+  $('tInc').onclick = () => enviar({ tipo: 'inclusao', hora: $('tHora').value });
+  $('tAbono').onclick = () => enviar({ tipo: 'abono', minutos: Number($('tMin').value) });
+  $('tratar').querySelectorAll('[data-d]').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); enviar({ tipo: 'desconsiderar', marcacao_id: Number(a.dataset.d) }); }));
+  $('tratar').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ---------- cadastro facial (LGPD: só o vetor numérico é salvo, nunca a foto) ----------
+async function cadastrarRosto(id, nome) {
+  $('biometria').innerHTML = `<div class="card"><h2>Biometria facial — ${esc(nome)}</h2>
+    <label><input type="checkbox" id="consent"> O trabalhador leu e aceitou o termo: a biometria facial será usada exclusivamente para registro de ponto, armazenada como vetor numérico criptográfico (sem foto) e excluída no desligamento (LGPD art. 11).</label>
+    <video id="vb" playsinline muted style="width:100%;max-width:420px;border-radius:12px;transform:scaleX(-1);display:block;margin:8px 0"></video>
+    <p id="sb" class="sub"></p><button class="b" id="cap">Capturar (pisque os olhos)</button> <button class="b sec" id="fechar">Fechar</button></div>`;
+  $('biometria').scrollIntoView({ behavior: 'smooth' });
+  let stream;
+  try { $('sb').textContent = 'Abrindo câmera e carregando modelos…'; stream = await Face.abrirCamera($('vb')); await Face.carregar(); $('sb').textContent = 'Pronto.'; }
+  catch (e) { $('sb').textContent = 'Erro: ' + e.message; }
+  const fechar = () => { if (stream) stream.getTracks().forEach((t) => t.stop()); $('biometria').innerHTML = ''; };
+  $('fechar').onclick = fechar;
+  $('cap').onclick = async () => {
+    if (!$('consent').checked) return ($('sb').textContent = 'Marque o aceite do termo de consentimento.');
+    try {
+      const r = await Face.capturar($('vb'), { aoStatus: (s) => ($('sb').textContent = s) });
+      await api('PUT', '/api/funcionarios/' + id, { face_descritor: r.descritor, consentimento: true });
+      fechar(); TELAS.funcionarios();
+    } catch (e) { $('sb').textContent = e.message; }
+  };
+}
+
+if (TOKEN) entrar(TOKEN).catch(sair); else mostrarLogin();
+</script>
+</body>
+</html>

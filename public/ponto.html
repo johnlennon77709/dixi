@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ponto DIXI-MVP</title>
+<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icone.svg"><link rel="stylesheet" href="/estilo.css">
+<style>
+  .relogio{font-size:56px;font-weight:700;text-align:center;font-variant-numeric:tabular-nums;margin:8px 0 0}
+  .data{text-align:center;color:var(--sub);margin-bottom:12px}
+  video{width:100%;max-width:480px;border-radius:12px;background:#000;display:block;margin:0 auto;transform:scaleX(-1)}
+  .grande{width:100%;padding:16px!important;font-size:18px!important;margin-top:8px}
+  .centro{max-width:520px;margin:0 auto}
+  .pin input{width:100%;margin-bottom:8px;font-size:18px}
+</style>
+</head>
+<body>
+<header><h1>⏱ Ponto</h1><span id="disp" class="sub"></span><span class="sp"></span><span id="rede" class="tag"></span><span id="fila" class="tag"></span></header>
+<main class="centro">
+  <section id="config" class="card oculto">
+    <h2>Configurar dispositivo</h2>
+    <p class="sub">Cole o token do dispositivo gerado no painel do RH (aba Dispositivos).</p>
+    <div class="linha"><input id="tokenIn" placeholder="token" style="flex:1"><button class="b" id="salvarTok">Salvar</button></div>
+  </section>
+
+  <section id="tela" class="oculto">
+    <div class="card">
+      <div class="relogio" id="relogio">--:--:--</div>
+      <div class="data" id="data"></div>
+      <div id="blocoFacial" class="oculto">
+        <video id="video" playsinline muted></video>
+        <p id="status" class="sub" style="text-align:center"></p>
+        <button class="b grande" id="btFacial">Bater ponto (reconhecimento facial)</button>
+        <button class="b sec grande" id="btUsarPin">Usar CPF + PIN</button>
+      </div>
+      <div id="blocoPin" class="pin oculto">
+        <input id="cpf" inputmode="numeric" placeholder="CPF" autocomplete="off">
+        <input id="pin" inputmode="numeric" type="password" placeholder="PIN" autocomplete="off">
+        <label class="sub"><input type="checkbox" id="selfie"> Tirar selfie de evidência</label>
+        <video id="videoSelfie" class="oculto" playsinline muted></video>
+        <button class="b grande" id="btPin">Bater ponto</button>
+        <button class="b sec grande oculto" id="btVoltarFacial">Voltar ao reconhecimento facial</button>
+      </div>
+      <div id="resultado"></div>
+    </div>
+    <p class="sub" id="infoHora"></p>
+    <p class="sub"><a href="#" id="trocar">Trocar dispositivo</a></p>
+  </section>
+</main>
+<script src="/face.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const LS = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+const qs = new URLSearchParams(location.search);
+if (qs.get('token')) { LS.set('token', qs.get('token')); history.replaceState(null, '', '/ponto.html'); }
+let token = LS.get('token'); let dados = LS.get('sync'); let offsetMs = LS.get('offset', 0); let stream = null;
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+const agora = () => new Date(Date.now() + offsetMs);
+const pad = (n) => String(n).padStart(2, '0');
+setInterval(() => {
+  const d = agora(); const br = new Date(d.getTime() - 3 * 3600e3);
+  $('relogio').textContent = `${pad(br.getUTCHours())}:${pad(br.getUTCMinutes())}:${pad(br.getUTCSeconds())}`;
+  $('data').textContent = `${pad(br.getUTCDate())}/${pad(br.getUTCMonth() + 1)}/${br.getUTCFullYear()} — horário de Brasília`;
+}, 250);
+
+async function api(metodo, url, body) {
+  const r = await fetch(url, { method: metodo, headers: { 'content-type': 'application/json', 'x-dispositivo': token }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.erro || r.statusText), { status: r.status });
+  return j;
+}
+
+async function sincronizar() {
+  try {
+    const t0 = Date.now(); const s = await api('GET', '/api/dispositivo/sync'); const t1 = Date.now();
+    offsetMs = new Date(s.horaServidor).getTime() + (t1 - t0) / 2 - t1; // hora do servidor (Hora Legal)
+    dados = s; LS.set('sync', s); LS.set('offset', offsetMs);
+    $('infoHora').textContent = `Hora sincronizada com o servidor (fonte: ${s.horaLegal.fonte === 'ntp' ? 'Hora Legal Brasileira ' + s.horaLegal.servidor : 'relógio do servidor'}).`;
+    await enviarFila();
+    marcarRede(true);
+  } catch (e) {
+    if (e.status === 401) { LS.set('token', null); token = null; return iniciar(); }
+    marcarRede(false);
+  }
+}
+function marcarRede(on) { $('rede').textContent = on ? 'online' : 'offline'; $('rede').style.color = on ? 'var(--ok)' : 'var(--warn)'; }
+function atualizarFila() { const n = LS.get('fila', []).length; $('fila').textContent = n ? `${n} na fila` : ''; $('fila').classList.toggle('oculto', !n); }
+
+// Fila offline: marcações gravadas no aparelho e enviadas quando a rede volta (idempotente por idLocal).
+async function enviarFila() {
+  const fila = LS.get('fila', []); const resto = [];
+  for (const m of fila) {
+    try { await api('POST', '/api/dispositivo/marcar', m); }
+    catch (e) {
+      if (!e.status || e.status >= 500) resto.push(m); // sem rede: tenta depois
+      else mostrar(`Marcação offline de ${new Date(m.dataHora).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} recusada: ${e.message}`, false);
+    }
+  }
+  LS.set('fila', resto); atualizarFila();
+}
+
+function mostrar(html, ok) { $('resultado').innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${html}</div>`; }
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function posicao() {
+  return new Promise((ok) => {
+    if (!navigator.geolocation) return ok({});
+    navigator.geolocation.getCurrentPosition((p) => ok({ latitude: p.coords.latitude, longitude: p.coords.longitude, precisao: p.coords.accuracy }), () => ok({}), { enableHighAccuracy: true, timeout: 8000 });
+  });
+}
+
+async function registrar(payload) {
+  const base = { ...payload, idLocal: crypto.randomUUID(), dataHora: agora().toISOString() };
+  if (dados && dados.dispositivo.tipo === 'app') Object.assign(base, await posicao());
+  try {
+    const r = await api('POST', '/api/dispositivo/marcar', { ...base, online: true });
+    mostrar(`✅ <b>${esc(r.nome)}</b> — ponto registrado às <b>${r.dataHora.slice(11, 16)}</b><br>NSR ${r.nsr} · <a href="${r.comprovante}" target="_blank">baixar comprovante (PDF)</a><br><code>${r.hash}</code>`, true);
+    marcarRede(true);
+  } catch (e) {
+    if (e.status) return mostrar('❌ ' + esc(e.message), false);
+    const fila = LS.get('fila', []); fila.push({ ...base, online: false }); LS.set('fila', fila); atualizarFila(); marcarRede(false);
+    mostrar(`📴 Sem conexão: marcação de <b>${esc(payload.nomeLocal || 'funcionário')}</b> gravada no aparelho às ${new Date(base.dataHora).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })} e será enviada automaticamente.`, true);
+  }
+}
+
+$('btFacial').onclick = async () => {
+  $('btFacial').disabled = true; $('resultado').innerHTML = '';
+  try {
+    const cap = await Face.capturar($('video'), { aoStatus: (s) => ($('status').textContent = s) });
+    const m = Face.identificar(cap.descritor, (dados && dados.funcionarios) || []);
+    if (!m) throw new Error('Rosto não reconhecido. Use CPF + PIN ou peça ao RH para cadastrar sua biometria.');
+    const fotoHash = await Face.hashFoto($('video'));
+    await registrar({ funcionarioId: m.f.id, metodo: 'facial', distanciaFacial: m.dist, fotoHash, nomeLocal: m.f.nome });
+  } catch (e) { mostrar('❌ ' + esc(e.message), false); }
+  $('status').textContent = ''; $('btFacial').disabled = false;
+};
+$('btPin').onclick = async () => {
+  const cpf = $('cpf').value.replace(/\D/g, ''); const pin = $('pin').value;
+  if (cpf.length !== 11 || !pin) return mostrar('Informe CPF (11 dígitos) e PIN.', false);
+  $('btPin').disabled = true;
+  let fotoHash;
+  if ($('selfie').checked) {
+    try { $('videoSelfie').classList.remove('oculto'); if (!stream) stream = await Face.abrirCamera($('videoSelfie')); else $('videoSelfie').srcObject = stream; await new Promise((r) => setTimeout(r, 600)); fotoHash = await Face.hashFoto($('videoSelfie')); } catch {}
+  }
+  const f = ((dados && dados.funcionarios) || []).find((x) => x.cpfFinal === cpf.slice(-4));
+  await registrar({ cpf, pin, metodo: 'pin', fotoHash, nomeLocal: f && f.nome });
+  $('pin').value = ''; $('btPin').disabled = false;
+};
+$('btUsarPin').onclick = () => { $('blocoFacial').classList.add('oculto'); $('blocoPin').classList.remove('oculto'); $('btVoltarFacial').classList.remove('oculto'); };
+$('btVoltarFacial').onclick = () => { $('blocoPin').classList.add('oculto'); $('blocoFacial').classList.remove('oculto'); };
+$('salvarTok').onclick = () => { token = $('tokenIn').value.trim(); LS.set('token', token); iniciar(); };
+$('trocar').onclick = (e) => { e.preventDefault(); LS.set('token', null); LS.set('sync', null); token = null; iniciar(); };
+window.addEventListener('online', sincronizar);
+
+async function iniciar() {
+  $('config').classList.toggle('oculto', !!token); $('tela').classList.toggle('oculto', !token);
+  if (!token) return;
+  await sincronizar(); atualizarFila();
+  if (!dados) { $('tela').classList.add('oculto'); $('config').classList.remove('oculto'); return; }
+  $('disp').textContent = `${dados.empresa.razao_social} · ${dados.dispositivo.nome}`;
+  const facial = dados.dispositivo.tipo === 'quiosque' && dados.funcionarios.some((f) => f.face);
+  $('blocoFacial').classList.toggle('oculto', !facial); $('blocoPin').classList.toggle('oculto', facial);
+  if (facial) {
+    $('status').textContent = 'Carregando reconhecimento facial…';
+    try { stream = await Face.abrirCamera($('video')); await Face.carregar(); $('status').textContent = 'Pronto. Toque em "Bater ponto" e pisque os olhos.'; }
+    catch (e) { $('status').textContent = 'Câmera indisponível: ' + e.message; $('btUsarPin').click(); }
+  }
+}
+setInterval(sincronizar, 30000);
+iniciar();
+</script>
+</body>
+</html>
