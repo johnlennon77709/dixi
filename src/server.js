@@ -6,11 +6,20 @@ if (maior < 22 || (maior === 22 && menor < 13)) {
   process.exit(1);
 }
 const { abrir } = require('./db');
-const { iniciar, urlsCelular } = require('./app');
+const { iniciar, urlsCelular, PRODUCAO } = require('./app');
 
 const porta = Number(process.env.PORT || 3000);
 const db = abrir();
-iniciar(db, porta).then(() => {
+if (PRODUCAO && !process.env.DIXI_SEGREDO) { console.error('Defina DIXI_SEGREDO (veja .env.exemplo).'); process.exit(1); }
+iniciar(db, porta).then((srv) => {
+  // Desligamento limpo (docker stop / systemctl stop): termina requisições e fecha o banco.
+  for (const sinal of ['SIGTERM', 'SIGINT']) process.on(sinal, () => {
+    console.log('Encerrando...');
+    srv.close(() => { try { db.close(); } catch {} process.exit(0); });
+    if (srv.extra) srv.extra.close();
+    setTimeout(() => process.exit(0), 5000).unref();
+  });
+  if (PRODUCAO) { console.log(`DIXI-MVP em produção na porta ${porta}${process.env.DIXI_URL_PUBLICA ? ' — ' + process.env.DIXI_URL_PUBLICA : ''}`); return; }
   console.log(`DIXI-MVP rodando em http://localhost:${porta}`);
   console.log(`  Painel do RH ........ http://localhost:${porta}/`);
   console.log(`  App de ponto (REP-P)  http://localhost:${porta}/ponto.html`);

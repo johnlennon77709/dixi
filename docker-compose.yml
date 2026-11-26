@@ -1,0 +1,37 @@
+# Produção: sistema de ponto + Caddy (HTTPS automático com Let's Encrypt).
+# Configure o arquivo .env (copie de .env.exemplo) e rode: docker compose up -d --build
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DIXI_PRODUCAO: "1"
+      DIXI_PROXY: "1"
+      DIXI_URL_PUBLICA: "https://${DOMINIO}"
+    volumes:
+      - dixi-data:/app/data
+      - ./certificado:/app/certificado:ro   # coloque aqui o certificado A1 (.pfx), se tiver
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMINIO: ${DOMINIO}
+      EMAIL_SSL: ${EMAIL_SSL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  dixi-data:
+  caddy-data:
+  caddy-config:

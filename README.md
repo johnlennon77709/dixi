@@ -2,7 +2,11 @@
 
 MVP funcional construído a partir do plano da **seção 7.1 do [REA da DIXI](REA-DIXI.md)**.
 
-## Como rodar
+## Hospedar com domínio próprio
+
+Para colocar no ar em `https://seudominio.com.br` (Docker + HTTPS automático + backup diário), siga o **[DEPLOY.md](DEPLOY.md)**. Num VPS Ubuntu, a instalação é um comando: `bash deploy/instalar.sh`.
+
+## Como rodar no seu computador
 
 Requer **Node.js 22.13+** (usa o SQLite embutido do Node).
 

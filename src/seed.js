@@ -7,6 +7,9 @@ const { hashSenha, semearFeriados } = require('./app');
 const { registrarMarcacao } = require('./rep');
 const T = require('./tempo');
 
+if (process.env.DIXI_PRODUCAO === '1' && process.env.DIXI_SEED_FORCAR !== '1') {
+  console.error('Em produção a empresa de demonstração não é criada. Crie a sua conta pelo site.'); process.exit(1);
+}
 const db = abrir();
 if (db.prepare("SELECT 1 FROM usuarios WHERE email='admin@demo.com'").get()) {
   console.log('Demo já existe. Login: admin@demo.com / demo123'); process.exit(0);

@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node --no-warnings src/server.js",
     "seed": "node --no-warnings src/seed.js",
-    "test": "node --no-warnings --test test/*.test.js"
+    "test": "node --no-warnings --test test/*.test.js",
+    "backup": "node --no-warnings src/backup.js"
   },
   "dependencies": {
     "@vladmandic/face-api": "1.7.15",

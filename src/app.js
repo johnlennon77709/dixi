@@ -14,6 +14,11 @@ const { espelho } = require('./servico');
 const horaLegal = require('./horalegal');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
+// Produção (servidor com domínio): DIXI_PRODUCAO=1. Bloqueia a conta de demonstração,
+// fecha o cadastro público após a 1ª empresa e exige DIXI_SEGREDO.
+const PRODUCAO = process.env.DIXI_PRODUCAO === '1';
+const ATRAS_DE_PROXY = process.env.DIXI_PROXY === '1'; // Caddy/Nginx na frente: confia no X-Forwarded-For
+const URL_PUBLICA = (process.env.DIXI_URL_PUBLICA || '').replace(/\/$/, '');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.bin': 'application/octet-stream', '.png': 'image/png' };
 
 // ---------- segurança ----------
@@ -29,6 +34,7 @@ function conferirSenha(s, h) {
 }
 function segredo() {
   if (process.env.DIXI_SEGREDO) return process.env.DIXI_SEGREDO;
+  if (PRODUCAO) throw new Error('DIXI_SEGREDO é obrigatório em produção');
   const f = path.join(__dirname, '..', 'data', 'segredo.txt');
   if (!fs.existsSync(f)) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, crypto.randomBytes(32).toString('hex')); }
   return fs.readFileSync(f, 'utf8').trim();
@@ -80,24 +86,30 @@ function semearFeriados(db, ano) {
 // ---------- rotas ----------
 function criarApp(db) {
   const rotas = [];
+  const cadastroAberto = () => !PRODUCAO || process.env.DIXI_CADASTRO_ABERTO === '1' || !db.prepare('SELECT 1 FROM empresas LIMIT 1').get();
   const rota = (metodo, padrao, auth, fn) => rotas.push({ metodo, re: new RegExp('^' + padrao.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), auth, fn });
 
   // --- cadastro e login do RH ---
+  rota('GET', '/api/config', null, () => ({ producao: PRODUCAO, cadastroAberto: cadastroAberto() }));
   rota('POST', '/api/cadastro', null, ({ body }) => {
+    if (!cadastroAberto()) throw erro(403, 'O cadastro de novas empresas está fechado neste servidor.');
     const { cnpj, razao_social, nome, email, senha } = body;
-    if (so(cnpj).length !== 14 || !razao_social || !email || !senha || String(senha).length < 6) throw erro(400, 'dados inválidos (CNPJ com 14 dígitos e senha com 6+ caracteres)');
+    const minimo = PRODUCAO ? 10 : 6;
+    if (so(cnpj).length !== 14 || !razao_social || !email || !senha || String(senha).length < minimo) throw erro(400, `dados inválidos (CNPJ com 14 dígitos e senha com ${minimo}+ caracteres)`);
     const e = db.prepare('INSERT INTO empresas (cnpj, razao_social) VALUES (?,?)').run(so(cnpj), razao_social);
     db.prepare('INSERT INTO usuarios (empresa_id, email, senha_hash, nome) VALUES (?,?,?,?)').run(e.lastInsertRowid, String(email).toLowerCase(), hashSenha(senha), nome || email);
     const ano = Number(T.dataBR(new Date()).slice(0, 4)); semearFeriados(db, ano); semearFeriados(db, ano + 1);
     return { token: assinar({ u: email, e: Number(e.lastInsertRowid), exp: Date.now() + 12 * 3600e3 }) };
   });
-  rota('POST', '/api/login', null, ({ body, host }) => {
-    // Pela internet (túnel), a conta de demonstração com senha pública fica bloqueada.
-    if (/trycloudflare\.com$/.test(host || '') && String(body.email || '').toLowerCase() === 'admin@demo.com') {
-      throw erro(403, 'Pela internet, a conta de demonstração é bloqueada por segurança. Crie a sua conta em "Criar empresa".');
+  rota('POST', '/api/login', null, ({ body, host, ip }) => {
+    // Pela internet (túnel ou produção), a conta de demonstração com senha pública fica bloqueada.
+    if ((PRODUCAO || /trycloudflare\.com$/.test(host || '')) && String(body.email || '').toLowerCase() === 'admin@demo.com') {
+      throw erro(403, 'A conta de demonstração é bloqueada neste endereço por segurança. Crie a sua conta em "Criar empresa".');
     }
+    limitarTentativas(ip);
     const u = db.prepare('SELECT * FROM usuarios WHERE email=?').get(String(body.email || '').toLowerCase());
-    if (!u || !conferirSenha(body.senha, u.senha_hash)) throw erro(401, 'e-mail ou senha incorretos');
+    if (!u || !conferirSenha(body.senha, u.senha_hash)) { registrarFalha(ip); throw erro(401, 'e-mail ou senha incorretos'); }
+    tentativas.delete(ip);
     return { token: assinar({ u: u.email, e: u.empresa_id, exp: Date.now() + 12 * 3600e3 }), nome: u.nome };
   });
 
@@ -246,7 +258,8 @@ function criarApp(db) {
     const t = lerToken(q.get('c')); if (!t || String(t.m) !== params.id) throw erro(403, 'link inválido');
     return arquivo(`comprovante_${params.id}.pdf`, 'application/pdf', fiscal.comprovantePDF(db, Number(params.id)));
   });
-  rota('GET', '/api/rede', 'rh', () => ({ urls: urlsCelular() }));
+  rota('GET', '/api/rede', 'rh', () => ({ urls: URL_PUBLICA ? [URL_PUBLICA] : urlsCelular(), publica: !!URL_PUBLICA }));
+  rota('GET', '/api/saude', null, () => { db.prepare('SELECT 1').get(); return { ok: true, hora: horaLegal.status().fonte }; });
   rota('GET', '/api/qr', 'rh', async ({ q }) => {
     const svg = await require('qrcode').toString(String(q.get('texto') || '').slice(0, 500), { type: 'svg', margin: 1, width: 180 });
     return { __arquivo: true, inline: true, nome: 'qr.svg', tipo: 'image/svg+xml', conteudo: Buffer.from(svg) };
@@ -256,11 +269,12 @@ function criarApp(db) {
   // ---------- servidor ----------
   return async function handler(req, res) {
     const url = new URL(req.url, 'http://x');
+    cabecalhosSeguranca(res);
     try {
       if (!url.pathname.startsWith('/api/')) return estatico(url.pathname, res);
       const r = rotas.find((x) => x.metodo === req.method && x.re.test(url.pathname));
       if (!r) throw erro(404, 'rota não encontrada');
-      const ctx = { params: url.pathname.match(r.re).groups || {}, q: url.searchParams, body: {}, host: String(req.headers.host || '').split(':')[0] };
+      const ctx = { params: url.pathname.match(r.re).groups || {}, q: url.searchParams, body: {}, host: String(req.headers.host || '').split(':')[0], ip: ipCliente(req) };
       if (req.method === 'POST' || req.method === 'PUT') ctx.body = await lerCorpo(req);
       if (r.auth === 'rh') {
         const t = lerToken((req.headers.authorization || '').replace('Bearer ', '') || url.searchParams.get('token'));
@@ -285,6 +299,31 @@ function criarApp(db) {
       res.end(JSON.stringify({ erro: status === 409 ? 'registro duplicado' : e.message }));
     }
   };
+}
+
+// ---------- proteção ----------
+function cabecalhosSeguranca(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  res.setHeader('Permissions-Policy', 'camera=(self), geolocation=(self), microphone=()');
+  if (PRODUCAO) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+}
+function ipCliente(req) {
+  if (ATRAS_DE_PROXY && req.headers['x-forwarded-for']) return String(req.headers['x-forwarded-for']).split(',')[0].trim();
+  return req.socket.remoteAddress || '?';
+}
+// Força bruta no login: 10 erros em 15 min bloqueiam o IP por 15 min.
+const tentativas = new Map();
+function limitarTentativas(ip) {
+  const t = tentativas.get(ip);
+  if (t && t.n >= 10 && Date.now() - t.desde < 15 * 60e3) throw erro(429, 'Muitas tentativas de login. Aguarde 15 minutos.');
+  if (t && Date.now() - t.desde >= 15 * 60e3) tentativas.delete(ip);
+}
+function registrarFalha(ip) {
+  const t = tentativas.get(ip) || { n: 0, desde: Date.now() }; t.n++; tentativas.set(ip, t);
+  if (tentativas.size > 10000) tentativas.clear();
 }
 
 function lerCorpo(req) {
@@ -357,11 +396,12 @@ function iniciar(db, porta) {
   };
   sync(); setInterval(sync, 6 * 3600e3).unref();
   let srvs = null;
-  if (process.env.DIXI_SEM_HTTPS !== '1') {
+  if (process.env.DIXI_SEM_HTTPS !== '1' && !PRODUCAO) {
     try { srvs = https.createServer(certificadoHttps(), handler); srvs.on('error', (e) => console.error('HTTPS indisponível:', e.message)); srvs.listen(PORTA_HTTPS, '0.0.0.0'); }
     catch (e) { console.error('HTTPS indisponível:', e.message); }
   }
+  srv.extra = srvs;
   return new Promise((r) => srv.listen(porta, '0.0.0.0', () => r(srv)));
 }
 
-module.exports = { criarApp, iniciar, urlsCelular, hashSenha, validarCPF, semearFeriados };
+module.exports = { criarApp, iniciar, urlsCelular, PRODUCAO, hashSenha, validarCPF, semearFeriados };

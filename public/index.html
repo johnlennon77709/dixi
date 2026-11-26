@@ -13,7 +13,7 @@
   <div id="formLogin">
     <input id="email" placeholder="e-mail" value="admin@demo.com"><input id="senha" type="password" placeholder="senha" value="demo123">
     <button class="b" id="btLogin" style="width:100%">Entrar</button>
-    <p class="sub">Demo: admin@demo.com / demo123 (rode <code>npm run seed</code>). <a href="#" id="irCadastro">Criar empresa</a></p>
+    <p class="sub"><span id="dicaDemo">Demo: admin@demo.com / demo123 (rode <code>npm run seed</code>). </span><a href="#" id="irCadastro">Criar empresa</a></p>
   </div>
   <div id="formCadastro" class="oculto">
     <input id="cRazao" placeholder="Razão social"><input id="cCnpj" placeholder="CNPJ"><input id="cNome" placeholder="Seu nome">
@@ -298,6 +298,11 @@ async function cadastrarRosto(id, nome) {
   };
 }
 
+// Em produção: sem dados de demonstração na tela e "Criar empresa" só se o cadastro estiver aberto.
+fetch('/api/config').then((r) => r.json()).then((c) => {
+  if (c.producao) { $('dicaDemo').remove(); $('email').value = ''; $('senha').value = ''; $('cSenha').placeholder = 'Senha (10+ caracteres)'; }
+  if (!c.cadastroAberto) $('irCadastro').remove();
+}).catch(() => {});
 if (TOKEN) entrar(TOKEN).catch(sair); else mostrarLogin();
 </script>
 </body>
