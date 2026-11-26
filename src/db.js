@@ -17,10 +17,11 @@ function abrir(arquivo) {
 }
 
 function migrar(db) {
+  cnpjOpcional(db);
   db.exec(`
   CREATE TABLE IF NOT EXISTS empresas (
     id INTEGER PRIMARY KEY,
-    cnpj TEXT NOT NULL UNIQUE,
+    cnpj TEXT UNIQUE,              -- opcional no cadastro; exigido só para AFD/AEJ/eSocial
     razao_social TEXT NOT NULL,
     usa_banco_horas INTEGER NOT NULL DEFAULT 1,
     criado_em TEXT NOT NULL DEFAULT (datetime('now'))
@@ -137,6 +138,22 @@ function migrar(db) {
     detalhe TEXT
   );
   `);
+}
+
+// Bancos criados antes desta versão tinham cnpj NOT NULL: recria a tabela sem a restrição.
+function cnpjOpcional(db) {
+  const col = db.prepare("SELECT \"notnull\" AS nn FROM pragma_table_info('empresas') WHERE name='cnpj'").get();
+  if (!col || !col.nn) return;
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`BEGIN;
+    CREATE TABLE empresas_nova (
+      id INTEGER PRIMARY KEY, cnpj TEXT UNIQUE, razao_social TEXT NOT NULL,
+      usa_banco_horas INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL DEFAULT (datetime('now')));
+    INSERT INTO empresas_nova SELECT id, cnpj, razao_social, usa_banco_horas, criado_em FROM empresas;
+    DROP TABLE empresas;
+    ALTER TABLE empresas_nova RENAME TO empresas;
+    COMMIT;`);
+  db.exec('PRAGMA foreign_keys = ON');
 }
 
 module.exports = { abrir };

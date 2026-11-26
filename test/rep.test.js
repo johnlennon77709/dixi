@@ -53,3 +53,17 @@ test('comprovante é um PDF', () => {
   const m = registrarMarcacao(db, { empresaId: 1, funcionarioId: 1, agora });
   assert.equal(fiscal.comprovantePDF(db, m.id).slice(0, 5).toString(), '%PDF-');
 });
+
+test('empresa pode ser criada sem CNPJ e bancos antigos são migrados', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const arq = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dixi-')), 'antigo.db');
+  const velho = new DatabaseSync(arq);
+  velho.exec("CREATE TABLE empresas (id INTEGER PRIMARY KEY, cnpj TEXT NOT NULL UNIQUE, razao_social TEXT NOT NULL, usa_banco_horas INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL DEFAULT (datetime('now')))");
+  velho.exec("INSERT INTO empresas (cnpj, razao_social) VALUES ('11222333000181','Antiga')"); velho.close();
+  const db = abrir(arq);
+  db.prepare("INSERT INTO empresas (cnpj, razao_social) VALUES (NULL,'Sem CNPJ 1')").run();
+  db.prepare("INSERT INTO empresas (cnpj, razao_social) VALUES (NULL,'Sem CNPJ 2')").run();
+  assert.equal(db.prepare('SELECT count(*) c FROM empresas').get().c, 3);
+  assert.equal(db.prepare("SELECT cnpj FROM empresas WHERE razao_social='Antiga'").get().cnpj, '11222333000181');
+});

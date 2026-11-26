@@ -16,7 +16,7 @@
     <p class="sub"><span id="dicaDemo">Demo: admin@demo.com / demo123 (rode <code>npm run seed</code>). </span><a href="#" id="irCadastro">Criar empresa</a></p>
   </div>
   <div id="formCadastro" class="oculto">
-    <input id="cRazao" placeholder="Razão social"><input id="cCnpj" placeholder="CNPJ"><input id="cNome" placeholder="Seu nome">
+    <input id="cRazao" placeholder="Nome da empresa"><input id="cNome" placeholder="Seu nome">
     <input id="cEmail" placeholder="E-mail"><input id="cSenha" type="password" placeholder="Senha (6+)">
     <button class="b" id="btCadastro" style="width:100%">Criar conta</button>
   </div>
@@ -52,7 +52,13 @@ async function api(metodo, url, body) {
   if (!r.ok) throw new Error(j.erro || r.statusText);
   return j;
 }
-const baixar = (url) => { const sep = url.includes('?') ? '&' : '?'; window.open(url + sep + 'token=' + encodeURIComponent(TOKEN), '_blank'); };
+async function baixar(url) {
+  const sep = url.includes('?') ? '&' : '?'; const full = url + sep + 'token=' + encodeURIComponent(TOKEN);
+  const r = await fetch(full).catch(() => null);
+  if (!r || !r.ok) { const j = r ? await r.json().catch(() => ({})) : {}; alert(j.erro || 'Sem conexão com o servidor.'); return; }
+  const nome = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'arquivo';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = nome; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
 function aviso(el, txt, ok) { el.innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${esc(txt)}</div>`; }
 function sair() {
   TOKEN = null; try { sessionStorage.removeItem('tok'); localStorage.removeItem('tok'); } catch {}
@@ -75,14 +81,14 @@ $('btLogin').onclick = async () => {
   catch (e) { aviso($('msgLogin'), e.message); }
 };
 $('btCadastro').onclick = async () => {
-  try { const r = await api('POST', '/api/cadastro', { razao_social: $('cRazao').value, cnpj: $('cCnpj').value, nome: $('cNome').value, email: $('cEmail').value, senha: $('cSenha').value }); entrar(r.token); }
+  try { const r = await api('POST', '/api/cadastro', { razao_social: $('cRazao').value, nome: $('cNome').value, email: $('cEmail').value, senha: $('cSenha').value }); entrar(r.token); }
   catch (e) { aviso($('msgLogin'), e.message); }
 };
 $('sair').onclick = sair;
 async function entrar(t) {
   TOKEN = t; try { sessionStorage.setItem('tok', t); localStorage.setItem('tok', t); } catch {}
   $('login').classList.add('oculto'); $('app').classList.remove('oculto');
-  const e = await api('GET', '/api/empresa'); $('empNome').textContent = `${e.razao_social} · CNPJ ${e.cnpj}`;
+  const e = await api('GET', '/api/empresa'); $('empNome').textContent = e.cnpj ? `${e.razao_social} · CNPJ ${e.cnpj}` : e.razao_social;
   abrir('espelho');
 }
 
@@ -219,7 +225,10 @@ const TELAS = {
   // ---------- fiscal e folha ----------
   async fiscal() {
     const emp = await api('GET', '/api/empresa');
-    $('conteudo').innerHTML = `<div class="card"><h2>Arquivos fiscais (Portaria 671)</h2><div class="linha">${seletorCompetencia()}</div>
+    $('conteudo').innerHTML = `<div class="card"><h2>Dados da empresa</h2>
+      <div class="linha"><input id="eRazao" placeholder="Nome / razão social" value="${esc(emp.razao_social)}" style="flex:2"><input id="eCnpj" placeholder="CNPJ (necessário só para AFD, AEJ e eSocial)" value="${esc(emp.cnpj || '')}" style="flex:1"><button class="b" id="eSalvar">Salvar</button></div>
+      <div id="eMsg">${emp.cnpj ? '' : '<p class="sub">Sem CNPJ, o ponto funciona normalmente; apenas os arquivos fiscais ficam indisponíveis.</p>'}</div></div>
+      <div class="card"><h2>Arquivos fiscais (Portaria 671)</h2><div class="linha">${seletorCompetencia()}</div>
       <div class="linha"><button class="b" data-u="/api/fiscal/afd">AFD</button><button class="b sec" data-u="/api/fiscal/afd.p7s">Assinatura AFD (.p7s)</button>
       <button class="b" data-u="/api/fiscal/aej">AEJ</button><button class="b sec" data-u="/api/fiscal/aej.p7s">Assinatura AEJ (.p7s)</button></div>
       <p class="sub">Assinatura CAdES destacada. Configure seu certificado A1 ICP-Brasil em DIXI_CERT_PFX/DIXI_CERT_SENHA; sem ele é usado um certificado de teste.</p></div>
@@ -228,6 +237,10 @@ const TELAS = {
     ligarCompetencia(() => {});
     $('conteudo').querySelectorAll('[data-u]').forEach((b) => (b.onclick = () => baixar(`${b.dataset.u}?competencia=${competencia}`)));
     $('banco').onchange = () => api('PUT', '/api/empresa', { usa_banco_horas: $('banco').checked });
+    $('eSalvar').onclick = async () => {
+      try { const e = await api('PUT', '/api/empresa', { razao_social: $('eRazao').value, cnpj: $('eCnpj').value }); aviso($('eMsg'), 'Dados salvos.', true); $('empNome').textContent = e.cnpj ? `${e.razao_social} · CNPJ ${e.cnpj}` : e.razao_social; }
+      catch (er) { aviso($('eMsg'), er.message); }
+    };
   },
 
   // ---------- celular ----------

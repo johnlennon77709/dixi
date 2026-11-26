@@ -61,6 +61,11 @@ function validarCPF(c) {
   }
   return true;
 }
+function validarCNPJ(c) {
+  c = so(c); if (c.length !== 14 || /^(\d)\1+$/.test(c)) return false;
+  const dv = (n) => { let s = 0; let p = n - 7; for (let i = 0; i < n; i++) { s += Number(c[i]) * p--; if (p < 2) p = 9; } const r = s % 11; return r < 2 ? 0 : 11 - r; };
+  return dv(12) === Number(c[12]) && dv(13) === Number(c[13]);
+}
 function distanciaM(a, b, c, d) {
   const R = 6371000; const r = (x) => (x * Math.PI) / 180;
   const h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2;
@@ -95,8 +100,10 @@ function criarApp(db) {
     if (!cadastroAberto()) throw erro(403, 'O cadastro de novas empresas está fechado neste servidor.');
     const { cnpj, razao_social, nome, email, senha } = body;
     const minimo = PRODUCAO ? 10 : 6;
-    if (so(cnpj).length !== 14 || !razao_social || !email || !senha || String(senha).length < minimo) throw erro(400, `dados inválidos (CNPJ com 14 dígitos e senha com ${minimo}+ caracteres)`);
-    const e = db.prepare('INSERT INTO empresas (cnpj, razao_social) VALUES (?,?)').run(so(cnpj), razao_social);
+    if (!razao_social || !email || !senha) throw erro(400, 'preencha o nome da empresa, e-mail e senha');
+    if (String(senha).length < minimo) throw erro(400, `a senha precisa ter ${minimo}+ caracteres`);
+    if (cnpj && !validarCNPJ(cnpj)) throw erro(400, 'CNPJ inválido (pode deixar em branco e informar depois)');
+    const e = db.prepare('INSERT INTO empresas (cnpj, razao_social) VALUES (?,?)').run(cnpj ? so(cnpj) : null, razao_social);
     db.prepare('INSERT INTO usuarios (empresa_id, email, senha_hash, nome) VALUES (?,?,?,?)').run(e.lastInsertRowid, String(email).toLowerCase(), hashSenha(senha), nome || email);
     const ano = Number(T.dataBR(new Date()).slice(0, 4)); semearFeriados(db, ano); semearFeriados(db, ano + 1);
     return { token: assinar({ u: email, e: Number(e.lastInsertRowid), exp: Date.now() + 12 * 3600e3 }) };
@@ -116,7 +123,12 @@ function criarApp(db) {
   // --- empresa / cadastros ---
   rota('GET', '/api/empresa', 'rh', ({ emp }) => db.prepare('SELECT * FROM empresas WHERE id=?').get(emp));
   rota('PUT', '/api/empresa', 'rh', ({ emp, body }) => {
-    db.prepare('UPDATE empresas SET usa_banco_horas=? WHERE id=?').run(body.usa_banco_horas ? 1 : 0, emp);
+    if (body.usa_banco_horas !== undefined) db.prepare('UPDATE empresas SET usa_banco_horas=? WHERE id=?').run(body.usa_banco_horas ? 1 : 0, emp);
+    if (body.razao_social) db.prepare('UPDATE empresas SET razao_social=? WHERE id=?').run(String(body.razao_social), emp);
+    if (body.cnpj !== undefined) {
+      if (body.cnpj && !validarCNPJ(body.cnpj)) throw erro(400, 'CNPJ inválido');
+      db.prepare('UPDATE empresas SET cnpj=? WHERE id=?').run(body.cnpj ? so(body.cnpj) : null, emp);
+    }
     return db.prepare('SELECT * FROM empresas WHERE id=?').get(emp);
   });
   rota('GET', '/api/estabelecimentos', 'rh', ({ emp }) => db.prepare('SELECT * FROM estabelecimentos WHERE empresa_id=?').all(emp));
@@ -203,11 +215,14 @@ function criarApp(db) {
 
   // --- fiscal ---
   const arquivo = (nome, tipo, conteudo) => ({ __arquivo: true, nome, tipo, conteudo });
+  const exigirCnpj = (emp) => {
+    if (!db.prepare('SELECT cnpj FROM empresas WHERE id=?').get(emp).cnpj) throw erro(400, 'Para gerar arquivos fiscais (AFD, AEJ, eSocial), informe o CNPJ da empresa na aba "Fiscal e folha".');
+  };
   const calculosEmpresa = (emp, inicio, fim) => Object.fromEntries(db.prepare('SELECT * FROM funcionarios WHERE empresa_id=?').all(emp).map((f) => [f.id, espelho(db, f, inicio, fim)]));
-  rota('GET', '/api/fiscal/afd', 'rh', ({ emp, q }) => { const { inicio, fim } = periodo(q); return arquivo(`AFD_${inicio}_${fim}.txt`, 'text/plain; charset=latin1', Buffer.from(fiscal.gerarAFD(db, emp, inicio, fim, horaLegal.agora()), 'latin1')); });
-  rota('GET', '/api/fiscal/afd.p7s', 'rh', ({ emp, q }) => { const { inicio, fim } = periodo(q); return arquivo(`AFD_${inicio}_${fim}.txt.p7s`, 'application/pkcs7-signature', fiscal.assinarCAdES(fiscal.gerarAFD(db, emp, inicio, fim, horaLegal.agora()))); });
-  rota('GET', '/api/fiscal/aej', 'rh', ({ emp, q }) => { const { inicio, fim } = periodo(q); return arquivo(`AEJ_${inicio}_${fim}.txt`, 'text/plain; charset=utf-8', Buffer.from(fiscal.gerarAEJ(db, emp, inicio, fim, calculosEmpresa(emp, inicio, fim), horaLegal.agora()))); });
-  rota('GET', '/api/fiscal/aej.p7s', 'rh', ({ emp, q }) => { const { inicio, fim } = periodo(q); return arquivo(`AEJ_${inicio}_${fim}.txt.p7s`, 'application/pkcs7-signature', fiscal.assinarCAdES(Buffer.from(fiscal.gerarAEJ(db, emp, inicio, fim, calculosEmpresa(emp, inicio, fim), horaLegal.agora())))); });
+  rota('GET', '/api/fiscal/afd', 'rh', ({ emp, q }) => { exigirCnpj(emp); const { inicio, fim } = periodo(q); return arquivo(`AFD_${inicio}_${fim}.txt`, 'text/plain; charset=latin1', Buffer.from(fiscal.gerarAFD(db, emp, inicio, fim, horaLegal.agora()), 'latin1')); });
+  rota('GET', '/api/fiscal/afd.p7s', 'rh', ({ emp, q }) => { exigirCnpj(emp); const { inicio, fim } = periodo(q); return arquivo(`AFD_${inicio}_${fim}.txt.p7s`, 'application/pkcs7-signature', fiscal.assinarCAdES(fiscal.gerarAFD(db, emp, inicio, fim, horaLegal.agora()))); });
+  rota('GET', '/api/fiscal/aej', 'rh', ({ emp, q }) => { exigirCnpj(emp); const { inicio, fim } = periodo(q); return arquivo(`AEJ_${inicio}_${fim}.txt`, 'text/plain; charset=utf-8', Buffer.from(fiscal.gerarAEJ(db, emp, inicio, fim, calculosEmpresa(emp, inicio, fim), horaLegal.agora()))); });
+  rota('GET', '/api/fiscal/aej.p7s', 'rh', ({ emp, q }) => { exigirCnpj(emp); const { inicio, fim } = periodo(q); return arquivo(`AEJ_${inicio}_${fim}.txt.p7s`, 'application/pkcs7-signature', fiscal.assinarCAdES(Buffer.from(fiscal.gerarAEJ(db, emp, inicio, fim, calculosEmpresa(emp, inicio, fim), horaLegal.agora())))); });
   rota('GET', '/api/comprovante/:id', 'rh', ({ emp, params }) => {
     const m = db.prepare('SELECT id FROM marcacoes WHERE id=? AND empresa_id=?').get(params.id, emp); if (!m) throw erro(404, 'marcação não encontrada');
     return arquivo(`comprovante_${m.id}.pdf`, 'application/pdf', fiscal.comprovantePDF(db, m.id));
@@ -218,7 +233,7 @@ function criarApp(db) {
   const espelhosEmpresa = (emp, inicio, fim) => db.prepare('SELECT * FROM funcionarios WHERE empresa_id=? AND ativo=1').all(emp).map((f) => espelho(db, f, inicio, fim));
   rota('GET', '/api/folha/csv', 'rh', ({ emp, q }) => { const p = periodo(q); return arquivo(`folha_${p.competencia}.csv`, 'text/csv; charset=utf-8', Buffer.from('﻿' + folha.csv(espelhosEmpresa(emp, p.inicio, p.fim)))); });
   rota('GET', '/api/folha/txt', 'rh', ({ emp, q }) => { const p = periodo(q); return arquivo(`folha_${p.competencia}.txt`, 'text/plain', Buffer.from(folha.txtFolha(espelhosEmpresa(emp, p.inicio, p.fim), p.competencia))); });
-  rota('GET', '/api/folha/s1200', 'rh', ({ emp, q }) => { const p = periodo(q); const e = db.prepare('SELECT * FROM empresas WHERE id=?').get(emp); return arquivo(`S-1200_${p.competencia}.xml`, 'application/xml', Buffer.from(folha.s1200(espelhosEmpresa(emp, p.inicio, p.fim), e, p.competencia))); });
+  rota('GET', '/api/folha/s1200', 'rh', ({ emp, q }) => { exigirCnpj(emp); const p = periodo(q); const e = db.prepare('SELECT * FROM empresas WHERE id=?').get(emp); return arquivo(`S-1200_${p.competencia}.xml`, 'application/xml', Buffer.from(folha.s1200(espelhosEmpresa(emp, p.inicio, p.fim), e, p.competencia))); });
 
   // --- dispositivo (app REP-P / quiosque) ---
   rota('GET', '/api/dispositivo/sync', 'disp', ({ disp }) => {
@@ -296,7 +311,10 @@ function criarApp(db) {
       const status = e.status || (String(e.message).includes('UNIQUE') ? 409 : 500);
       if (status === 500) console.error(e);
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ erro: status === 409 ? 'registro duplicado' : e.message }));
+      const msg409 = /empresas\.cnpj/.test(e.message) ? 'Este CNPJ já está cadastrado em outra empresa.'
+        : /usuarios\.email/.test(e.message) ? 'Este e-mail já está cadastrado. Use "Entrar".'
+        : /funcionarios/.test(e.message) ? 'Já existe um funcionário com este CPF.' : 'Registro duplicado.';
+      res.end(JSON.stringify({ erro: status === 409 ? msg409 : e.message }));
     }
   };
 }

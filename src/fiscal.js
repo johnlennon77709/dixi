@@ -195,7 +195,7 @@ function comprovantePDF(db, marcacaoId) {
   if (!m) return null;
   return pdfTexto('Comprovante de Registro de Ponto do Trabalhador', [
     `Empregador: ${m.razao_social}`,
-    `CNPJ: ${m.cnpj}`,
+    `CNPJ: ${m.cnpj || '-'}`,
     `Local: ${m.local || '-'} ${m.endereco || ''}`,
     `REP-P (registro INPI): ${NUMERO_REP_P}`,
     `Trabalhador: ${m.nome}`,
